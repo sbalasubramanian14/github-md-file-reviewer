@@ -201,7 +201,18 @@
 
 
   function normalizeText(text) {
-    return (text || '').replace(/\s+/g, ' ').trim().toLowerCase().substring(0, 80);
+    return (text || '')
+      .replace(/\*\*(.+?)\*\*/g, '$1')   // bold
+      .replace(/\*(.+?)\*/g, '$1')       // italic
+      .replace(/__(.+?)__/g, '$1')       // bold
+      .replace(/_(.+?)_/g, '$1')         // italic
+      .replace(/`([^`]+)`/g, '$1')       // inline code
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
+      .replace(/!\[[^\]]*\]\([^)]+\)/g, '')    // images
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase()
+      .substring(0, 100);
   }
 
   function matchChangedElements(changedElements, allElements, blocks, positionMap) {
@@ -224,12 +235,13 @@
         const blockText = normalizeText(block.text || '');
         if (!blockText) continue;
 
-        // Check if either contains the other (handles truncation)
         let score = 0;
         if (elText === blockText) {
           score = 100;
-        } else if (elText.startsWith(blockText.substring(0, 30)) || blockText.startsWith(elText.substring(0, 30))) {
-          score = 80;
+        } else if (elText.startsWith(blockText.substring(0, 50)) || blockText.startsWith(elText.substring(0, 50))) {
+          score = 90;
+        } else if (elText.startsWith(blockText.substring(0, 25)) || blockText.startsWith(elText.substring(0, 25))) {
+          score = 75;
         } else if (elText.includes(blockText.substring(0, 20)) || blockText.includes(elText.substring(0, 20))) {
           score = 60;
         }
