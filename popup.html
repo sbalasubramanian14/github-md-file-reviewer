@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitHub MD Reviewer</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="logo">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+          <rect width="24" height="24" rx="6" fill="url(#grad)"/>
+          <path d="M6 8h12M6 12h8M6 16h10" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+          <rect x="12" y="11" width="9" height="7" rx="2" fill="white" fill-opacity="0.9"/>
+          <path d="M14.5 14h4M14.5 16h2.5" stroke="#7c3aed" stroke-width="0.8" stroke-linecap="round"/>
+          <defs>
+            <linearGradient id="grad" x1="0" y1="0" x2="24" y2="24">
+              <stop stop-color="#6366f1"/>
+              <stop offset="1" stop-color="#8b5cf6"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <h1>MD Reviewer</h1>
+      </div>
+      <span class="version">v1.0</span>
+    </header>
+
+    <div id="auth-section" class="section">
+      <div id="status-bar" class="status-bar status-disconnected">
+        <span class="status-dot"></span>
+        <span id="status-text">Not connected</span>
+      </div>
+
+      <div id="token-form" class="form">
+        <label for="token-input">GitHub Personal Access Token</label>
+        <div class="input-group">
+          <input type="password" id="token-input" placeholder="ghp_xxxxxxxxxxxx" spellcheck="false" autocomplete="off">
+          <button id="toggle-visibility" class="icon-btn" title="Show/hide token">
+            <svg id="eye-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 3.5C4.5 3.5 1.5 6 0 8c1.5 2 4.5 4.5 8 4.5S14.5 10 16 8c-1.5-2-4.5-4.5-8-4.5zm0 7.5a3 3 0 110-6 3 3 0 010 6zm0-4.5a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"/>
+            </svg>
+          </button>
+        </div>
+        <p class="hint">
+          Needs <code>repo</code> scope.
+          <a href="#" id="help-link">How to create?</a>
+        </p>
+        <button id="save-btn" class="btn btn-primary">
+          <span class="btn-text">Connect</span>
+          <span class="btn-loader" hidden>
+            <svg width="16" height="16" viewBox="0 0 16 16" class="spinner">
+              <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="20 12" stroke-linecap="round"/>
+            </svg>
+          </span>
+        </button>
+      </div>
+
+      <div id="connected-info" class="connected-info" hidden>
+        <div class="user-card">
+          <img id="user-avatar" class="avatar" src="" alt="Avatar">
+          <div class="user-details">
+            <span id="user-name" class="user-name"></span>
+            <span id="user-login" class="user-login"></span>
+          </div>
+        </div>
+        <button id="disconnect-btn" class="btn btn-danger">Disconnect</button>
+      </div>
+    </div>
+
+    <div id="error-msg" class="error-msg" hidden></div>
+
+    <div class="section usage-section">
+      <h3>How to use</h3>
+      <ol class="usage-steps">
+        <li>Open any PR with <code>.md</code> files</li>
+        <li>Go to the <strong>Files changed</strong> tab</li>
+        <li>Click the rendered diff toggle <kbd>📄</kbd></li>
+        <li>Hover over any element to see the <span class="comment-icon-inline">💬</span> button</li>
+        <li>Click it to leave a review comment</li>
+      </ol>
+    </div>
+
+    <footer class="footer">
+      <span>Works on <code>github.com/*/pull/*/files</code></span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
