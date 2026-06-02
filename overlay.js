@@ -57,7 +57,6 @@ window.MDROverlay = (() => {
     const next = current === 'dark' ? 'light' : 'dark';
     el.setAttribute('data-theme', next);
     chrome.storage.local.set({ mdr_theme: next });
-    el.querySelector('#mdr-theme-toggle').textContent = next === 'dark' ? '\u2600' : '\u263D';
   }
 
   function shell() {
@@ -65,7 +64,7 @@ window.MDROverlay = (() => {
       <div class="mdr-topbar">
         <div class="mdr-topbar-left">
           <div class="mdr-topbar-logo">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="rgba(255,255,255,0.2)"/><path d="M6 8h12M6 12h8M6 16h10" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="currentColor" opacity="0.15"/><path d="M6 8h12M6 12h8M6 16h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             MD Reviewer
           </div>
           <span class="mdr-topbar-pr" id="mdr-pr-info">Loading...</span>
@@ -76,7 +75,7 @@ window.MDROverlay = (() => {
             <button class="mdr-mode-btn" data-mode="review">Start Review</button>
           </div>
           <select class="mdr-file-select" id="mdr-file-select" disabled><option>Loading...</option></select>
-          <button class="mdr-theme-btn" id="mdr-theme-toggle" title="Toggle dark/light mode">\u263D</button>
+          <button class="mdr-theme-btn" id="mdr-theme-toggle" title="Toggle dark/light mode"><span class="mdr-theme-sun">\u2600\uFE0E</span><span class="mdr-theme-knob"></span><span class="mdr-theme-moon">\u263D\uFE0E</span></button>
           <button class="mdr-close-btn" id="mdr-close" title="Close (Esc)">&times;</button>
         </div>
       </div>
