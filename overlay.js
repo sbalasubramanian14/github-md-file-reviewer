@@ -1000,9 +1000,12 @@ window.MDROverlay = (() => {
         <button class="mdr-btn-submit">${submitLabel}</button>
       </div>`;
 
-    // If block is inside a <pre> (code line), insert after the <pre> parent
-    const insertAfter = block.closest('pre') || block;
-    insertAfter.after(form);
+    // Insert form right after the clicked element
+    // For code lines inside <pre>, insert inline so it stays near the line
+    if (block.closest('pre')) {
+      form.classList.add('mdr-inline-form-code');
+    }
+    block.after(form);
     const ta = form.querySelector('textarea');
     const sub = form.querySelector('.mdr-btn-submit');
     setTimeout(() => ta.focus(), 50);

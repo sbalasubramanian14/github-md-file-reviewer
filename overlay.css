@@ -363,9 +363,13 @@
   color: var(--accent);
 }
 
-/* Inline form after code line — should appear outside the pre */
-.mdr-markdown pre + .mdr-inline-form {
-  margin-top: -4px;
+/* Inline form inside code block */
+.mdr-inline-form-code {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; margin: 4px 8px; padding: 8px;
+}
+.mdr-inline-form-code .mdr-inline-textarea {
+  font-size: 12px;
 }
 
 /* Table rows are commentable */
