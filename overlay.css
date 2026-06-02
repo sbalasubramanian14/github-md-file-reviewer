@@ -297,7 +297,8 @@
 /* Hoverable blocks with comment button */
 .mdr-markdown [data-line] { position: relative; transition: background 0.15s; border-radius: 3px; padding: 1px 4px; }
 .mdr-markdown [data-line]:hover { background: var(--bg-hover); }
-.mdr-markdown pre[data-line]:hover { background: var(--pre-bg); outline: 2px solid var(--accent); outline-offset: -2px; }
+.mdr-markdown pre:hover { background: var(--pre-bg); }
+.mdr-markdown .mdr-code-line[data-line]:hover { background: rgba(255,255,255,0.04); }
 
 /* Highlighted lines that have comments */
 .mdr-markdown [data-has-comment="true"] {
@@ -329,34 +330,41 @@
 
 /* Code block line-by-line commenting */
 .mdr-markdown pre {
-  padding: 0 !important; overflow-x: auto;
+  padding: 6px 0 !important; overflow-x: auto; overflow-y: hidden;
 }
 .mdr-code-line {
   display: flex; align-items: flex-start;
-  padding: 1px 12px 1px 0; min-height: 20px;
-  transition: background 0.1s; border-radius: 0;
+  padding: 0 36px 0 0; min-height: 20px;
+  transition: background 0.1s;
 }
-.mdr-code-line:hover { background: rgba(255,255,255,0.06); }
+.mdr-code-line:hover { background: rgba(255,255,255,0.04); }
 .mdr-code-line .mdr-comment-btn {
-  left: auto; right: 4px; top: 1px;
-  width: 20px; height: 20px; border-radius: 4px;
-  background: rgba(99, 102, 241, 0.85);
+  position: absolute; right: 6px; top: 1px; left: auto;
+  width: 20px; height: 18px; border-radius: 4px;
+  background: rgba(99, 102, 241, 0.8);
+  opacity: 0;
 }
+.mdr-code-line:hover .mdr-comment-btn { opacity: 1; }
 .mdr-code-linenum {
-  display: inline-block; width: 42px; min-width: 42px;
+  display: inline-block; width: 40px; min-width: 40px;
   text-align: right; padding-right: 12px; padding-left: 8px;
-  color: rgba(255,255,255,0.25); font-size: 12px;
-  user-select: none; flex-shrink: 0;
+  color: rgba(255,255,255,0.2); font-size: 12px;
+  user-select: none; flex-shrink: 0; line-height: 20px;
 }
+.mdr-code-line:hover .mdr-code-linenum { color: rgba(255,255,255,0.5); }
 .mdr-code-text {
-  flex: 1; white-space: pre;
+  flex: 1; white-space: pre; line-height: 20px;
 }
 .mdr-code-line[data-has-comment="true"] {
-  background: rgba(99, 102, 241, 0.12);
-  border-left: 2px solid var(--accent);
+  background: rgba(99, 102, 241, 0.1);
 }
 .mdr-code-line[data-has-comment="true"] .mdr-code-linenum {
   color: var(--accent);
+}
+
+/* Inline form after code line — should appear outside the pre */
+.mdr-markdown pre + .mdr-inline-form {
+  margin-top: -4px;
 }
 
 /* Table rows are commentable */
