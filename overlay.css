@@ -72,7 +72,7 @@
 .mdr-theme-btn:hover { background: rgba(255,255,255,0.15); }
 .mdr-theme-sun, .mdr-theme-moon {
   width: 28px; height: 26px; display: flex; align-items: center; justify-content: center;
-  font-size: 13px; z-index: 1; transition: opacity 0.2s;
+  z-index: 1; transition: opacity 0.2s; color: #e0e7ff;
 }
 .mdr-theme-knob {
   position: absolute; top: 2px; left: 2px;
