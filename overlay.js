@@ -271,24 +271,42 @@ window.MDROverlay = (() => {
     });
 
     const count = pendingComments.length;
+    const currentUser = await getCurrentUser();
+    const userData = await new Promise(r => chrome.storage.local.get(['github_user'], d => r(d.github_user || {})));
 
-    // Small delay for GitHub to process the review, then refresh
-    await new Promise(r => setTimeout(r, 1000));
-    comments = await GitHubAPI.getComments(pr.owner, pr.repo, pr.pullNumber);
+    // Immediately add submitted comments to local state so they show up right away
+    // (GitHub API has propagation delay before GET returns them)
+    for (const pc of pendingComments) {
+      comments.push({
+        id: Date.now() + Math.random(),
+        body: pc.body,
+        path: pc.path,
+        line: pc.line,
+        position: pc.position,
+        user: { login: currentUser || 'you', avatar_url: userData.avatar_url || '' },
+        created_at: new Date().toISOString()
+      });
+    }
 
     exitReviewMode();
     savePendingToStorage();
     el.querySelectorAll('.mdr-mode-btn').forEach(b => b.classList.remove('active'));
     el.querySelector('[data-mode="comment"]').classList.add('active');
-    // Clear all pending badges from content
     el.querySelectorAll('.mdr-pending-badge').forEach(b => b.remove());
 
-    // Reload the current file to refresh everything
     if (fileData) {
       await loadFile(fileData.filePath);
     }
 
     toast(`Review submitted (${count} comments)`, 'success');
+
+    // Refresh from API in background after delay to get real comment IDs
+    setTimeout(async () => {
+      try {
+        comments = await GitHubAPI.getComments(pr.owner, pr.repo, pr.pullNumber);
+        if (fileData) renderCommentsSidebar(fileData.filePath);
+      } catch {}
+    }, 5000);
   }
 
   async function loadPR() {
