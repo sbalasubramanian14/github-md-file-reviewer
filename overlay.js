@@ -81,7 +81,7 @@ window.MDROverlay = (() => {
         </div>
       </div>
       <div class="mdr-review-bar" id="mdr-review-bar" hidden>
-        <span class="mdr-review-bar-text"><span id="mdr-pending-count">0</span> pending comments</span>
+        <span class="mdr-review-bar-text"><span id="mdr-pending-count">0</span> pending comments <span class="mdr-review-warn">— don't refresh, drafts are stored locally</span></span>
         <div class="mdr-review-bar-actions">
           <button class="mdr-rb-btn mdr-rb-discard" id="mdr-review-discard">Discard Review</button>
           <button class="mdr-rb-btn mdr-rb-submit" id="mdr-review-submit">Submit Review</button>
