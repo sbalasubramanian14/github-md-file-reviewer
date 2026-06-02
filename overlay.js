@@ -272,16 +272,22 @@ window.MDROverlay = (() => {
 
     const count = pendingComments.length;
 
-    // Refresh comments from API
+    // Small delay for GitHub to process the review, then refresh
+    await new Promise(r => setTimeout(r, 1000));
     comments = await GitHubAPI.getComments(pr.owner, pr.repo, pr.pullNumber);
 
     exitReviewMode();
     savePendingToStorage();
     el.querySelectorAll('.mdr-mode-btn').forEach(b => b.classList.remove('active'));
     el.querySelector('[data-mode="comment"]').classList.add('active');
+    // Clear all pending badges from content
     el.querySelectorAll('.mdr-pending-badge').forEach(b => b.remove());
 
-    if (fileData) renderCommentsSidebar(fileData.filePath);
+    // Re-render sidebar with the now-real comments
+    if (fileData) {
+      await renderCommentsSidebar(fileData.filePath);
+      refreshPendingBadges();
+    }
 
     toast(`Review submitted (${count} comments)`, 'success');
   }
