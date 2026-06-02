@@ -5,6 +5,11 @@ window.MDROverlay = (() => {
   let el = null;
   let comments = [];
 
+  // Review mode state
+  let reviewMode = false;
+  let reviewId = null;
+  let pendingComments = []; // { path, position, line, body }
+
   function toast(msg, type = 'success') {
     document.querySelectorAll('.mdr-toast').forEach(t => t.remove());
     const t = document.createElement('div');
@@ -28,6 +33,7 @@ window.MDROverlay = (() => {
 
     el.querySelector('#mdr-close').addEventListener('click', close);
     el.querySelector('#mdr-theme-toggle').addEventListener('click', toggleTheme);
+    setupReviewMode();
     document.addEventListener('keydown', onEsc);
 
     await loadPR();
@@ -66,9 +72,20 @@ window.MDROverlay = (() => {
           <span class="mdr-topbar-pr" id="mdr-pr-info">Loading...</span>
         </div>
         <div class="mdr-topbar-right">
+          <div class="mdr-mode-toggle" id="mdr-mode-toggle">
+            <button class="mdr-mode-btn active" data-mode="comment">Comment</button>
+            <button class="mdr-mode-btn" data-mode="review">Start Review</button>
+          </div>
           <select class="mdr-file-select" id="mdr-file-select" disabled><option>Loading...</option></select>
           <button class="mdr-theme-btn" id="mdr-theme-toggle" title="Toggle dark/light mode">\u263D</button>
           <button class="mdr-close-btn" id="mdr-close" title="Close (Esc)">&times;</button>
+        </div>
+      </div>
+      <div class="mdr-review-bar" id="mdr-review-bar" hidden>
+        <span class="mdr-review-bar-text"><span id="mdr-pending-count">0</span> pending comments</span>
+        <div class="mdr-review-bar-actions">
+          <button class="mdr-rb-btn mdr-rb-discard" id="mdr-review-discard">Discard Review</button>
+          <button class="mdr-rb-btn mdr-rb-submit" id="mdr-review-submit">Submit Review</button>
         </div>
       </div>
       <div class="mdr-statsbar" id="mdr-statsbar"><span>Loading...</span></div>
@@ -81,6 +98,138 @@ window.MDROverlay = (() => {
           <div class="mdr-sidebar-list" id="mdr-sidebar-list"><span class="mdr-sidebar-empty">No comments yet</span></div>
         </div>
       </div>`;
+  }
+
+  function setupReviewMode() {
+    el.querySelectorAll('.mdr-mode-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const mode = btn.getAttribute('data-mode');
+        el.querySelectorAll('.mdr-mode-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        if (mode === 'review') {
+          startReviewMode();
+        } else {
+          exitReviewMode();
+        }
+      });
+    });
+
+    el.querySelector('#mdr-review-discard').addEventListener('click', discardReview);
+    el.querySelector('#mdr-review-submit').addEventListener('click', showSubmitDialog);
+  }
+
+  async function startReviewMode() {
+    reviewMode = true;
+    pendingComments = [];
+    el.querySelector('#mdr-review-bar').hidden = false;
+    updatePendingCount();
+    toast('Review mode — comments will be batched', 'info');
+  }
+
+  function exitReviewMode() {
+    reviewMode = false;
+    reviewId = null;
+    pendingComments = [];
+    el.querySelector('#mdr-review-bar').hidden = true;
+  }
+
+  async function discardReview() {
+    if (pendingComments.length > 0 && !confirm(`Discard ${pendingComments.length} pending comment(s)?`)) return;
+
+    if (reviewId) {
+      try { await GitHubAPI.deletePendingReview(pr.owner, pr.repo, pr.pullNumber, reviewId); } catch {}
+    }
+    exitReviewMode();
+    // Switch toggle back to Comment
+    el.querySelectorAll('.mdr-mode-btn').forEach(b => b.classList.remove('active'));
+    el.querySelector('[data-mode="comment"]').classList.add('active');
+    // Remove pending badges from content
+    el.querySelectorAll('.mdr-pending-badge').forEach(b => b.remove());
+    toast('Review discarded');
+  }
+
+  function updatePendingCount() {
+    const countEl = el.querySelector('#mdr-pending-count');
+    if (countEl) countEl.textContent = pendingComments.length;
+  }
+
+  function showSubmitDialog() {
+    if (pendingComments.length === 0) {
+      toast('No pending comments to submit', 'error');
+      return;
+    }
+
+    // Remove existing dialog
+    el.querySelectorAll('.mdr-submit-dialog').forEach(d => d.remove());
+
+    const dialog = document.createElement('div');
+    dialog.className = 'mdr-submit-dialog';
+    dialog.innerHTML = `
+      <div class="mdr-submit-dialog-inner">
+        <div class="mdr-submit-dialog-header">Submit Review (${pendingComments.length} comments)</div>
+        <textarea class="mdr-inline-textarea" id="mdr-review-body" placeholder="Review summary (optional)..."></textarea>
+        <div class="mdr-submit-dialog-actions">
+          <button class="mdr-rb-btn mdr-rb-discard" id="mdr-sd-cancel">Cancel</button>
+          <button class="mdr-rb-btn mdr-sd-approve" data-event="APPROVE">Approve</button>
+          <button class="mdr-rb-btn mdr-sd-reqchanges" data-event="REQUEST_CHANGES">Request Changes</button>
+          <button class="mdr-rb-btn mdr-rb-submit" data-event="COMMENT">Comment</button>
+        </div>
+      </div>`;
+
+    el.querySelector('.mdr-body').appendChild(dialog);
+
+    dialog.querySelector('#mdr-sd-cancel').addEventListener('click', () => dialog.remove());
+
+    dialog.querySelectorAll('[data-event]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const event = btn.getAttribute('data-event');
+        const body = dialog.querySelector('#mdr-review-body').value.trim();
+
+        dialog.querySelectorAll('button').forEach(b => { b.disabled = true; });
+        btn.textContent = 'Submitting...';
+
+        try {
+          await submitBatchReview(event, body);
+          dialog.remove();
+        } catch (err) {
+          dialog.querySelectorAll('button').forEach(b => { b.disabled = false; });
+          btn.textContent = btn.getAttribute('data-event');
+          toast(err.message, 'error');
+        }
+      });
+    });
+  }
+
+  async function submitBatchReview(event, body) {
+    // Create review with all pending comments in one API call
+    const reviewComments = pendingComments.map(c => ({
+      path: c.path,
+      position: c.position,
+      body: c.body
+    }));
+
+    await GitHubAPI.request(`/repos/${pr.owner}/${pr.repo}/pulls/${pr.pullNumber}/reviews`, {
+      method: 'POST',
+      body: JSON.stringify({
+        commit_id: pr.headSha,
+        event,
+        body: body || '',
+        comments: reviewComments
+      })
+    });
+
+    // Refresh comments from API
+    comments = await GitHubAPI.getComments(pr.owner, pr.repo, pr.pullNumber);
+
+    exitReviewMode();
+    el.querySelectorAll('.mdr-mode-btn').forEach(b => b.classList.remove('active'));
+    el.querySelector('[data-mode="comment"]').classList.add('active');
+    el.querySelectorAll('.mdr-pending-badge').forEach(b => b.remove());
+
+    if (fileData) renderCommentsSidebar(fileData.filePath);
+
+    toast(`Review submitted (${reviewComments.length} comments)`, 'success');
   }
 
   async function loadPR() {
@@ -678,14 +827,17 @@ window.MDROverlay = (() => {
   function openForm(block) {
     el.querySelectorAll('.mdr-inline-form').forEach(f => f.remove());
     const line = parseInt(block.getAttribute('data-line'));
+    const isReview = reviewMode;
+    const submitLabel = isReview ? 'Add to Review' : 'Submit';
+
     const form = document.createElement('div');
     form.className = 'mdr-inline-form';
     form.innerHTML = `
-      <div class="mdr-inline-header">Line ${line}</div>
-      <textarea class="mdr-inline-textarea" placeholder="Leave a comment..." autofocus></textarea>
+      <div class="mdr-inline-header">Line ${line} ${isReview ? '<span class="mdr-review-badge">Review Mode</span>' : ''}</div>
+      <textarea class="mdr-inline-textarea" placeholder="${isReview ? 'Add comment to review...' : 'Leave a comment...'}" autofocus></textarea>
       <div class="mdr-inline-actions">
         <button class="mdr-btn-cancel">Cancel</button>
-        <button class="mdr-btn-submit">Submit</button>
+        <button class="mdr-btn-submit">${submitLabel}</button>
       </div>`;
 
     block.after(form);
@@ -702,6 +854,24 @@ window.MDROverlay = (() => {
     sub.addEventListener('click', async () => {
       const text = ta.value.trim();
       if (!text) { ta.style.borderColor = '#ef4444'; return; }
+
+      if (isReview) {
+        // Batch mode: add to pending, don't post yet
+        pendingComments.push({ path: fileData.filePath, position: line, line, body: text });
+        updatePendingCount();
+        form.remove();
+
+        // Show a small pending badge on the block
+        const badge = document.createElement('span');
+        badge.className = 'mdr-pending-badge';
+        badge.textContent = 'Pending';
+        block.appendChild(badge);
+
+        toast(`Comment added to review (${pendingComments.length} pending)`, 'info');
+        return;
+      }
+
+      // Immediate mode: post now
       sub.disabled = true; sub.textContent = 'Posting...';
       try {
         const newComment = await GitHubAPI.postComment(pr.owner, pr.repo, pr.pullNumber, {

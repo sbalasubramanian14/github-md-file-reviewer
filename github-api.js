@@ -96,5 +96,32 @@ window.GitHubAPI = (() => {
     });
   }
 
-  return { getToken, parsePRUrl, getRawFile, getPR, getPRFiles, getComments, postComment, editComment, deleteComment, replyToComment };
+  async function createPendingReview(owner, repo, num, commitId) {
+    return request(`/repos/${owner}/${repo}/pulls/${num}/reviews`, {
+      method: 'POST',
+      body: JSON.stringify({ commit_id: commitId, event: 'PENDING' })
+    });
+  }
+
+  async function addReviewComment(owner, repo, num, reviewId, { path, position, body }) {
+    return request(`/repos/${owner}/${repo}/pulls/${num}/reviews/${reviewId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ path, position, body })
+    });
+  }
+
+  async function submitReview(owner, repo, num, reviewId, { event, body }) {
+    return request(`/repos/${owner}/${repo}/pulls/${num}/reviews/${reviewId}/events`, {
+      method: 'POST',
+      body: JSON.stringify({ event, body: body || '' })
+    });
+  }
+
+  async function deletePendingReview(owner, repo, num, reviewId) {
+    return request(`/repos/${owner}/${repo}/pulls/${num}/reviews/${reviewId}`, {
+      method: 'DELETE'
+    });
+  }
+
+  return { request, getToken, parsePRUrl, getRawFile, getPR, getPRFiles, getComments, postComment, editComment, deleteComment, replyToComment, createPendingReview, addReviewComment, submitReview, deletePendingReview };
 })();
