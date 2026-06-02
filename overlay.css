@@ -327,9 +327,11 @@
 .mdr-badge-avatar:first-child { margin-left: 0; }
 .mdr-badge-count { margin-left: 2px; }
 
-/* Code blocks: comment button on top-right since left is inside dark bg */
+/* Code blocks: button inside top-right corner (overflow clips outside buttons) */
 .mdr-markdown pre[data-line] .mdr-comment-btn {
-  left: auto; right: -34px; top: 8px;
+  left: auto; right: 8px; top: 8px;
+  background: rgba(99, 102, 241, 0.9);
+  backdrop-filter: blur(4px);
 }
 .mdr-markdown pre[data-has-comment="true"] {
   border-left: 2px solid var(--accent);
