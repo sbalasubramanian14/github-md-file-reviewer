@@ -283,10 +283,9 @@ window.MDROverlay = (() => {
     // Clear all pending badges from content
     el.querySelectorAll('.mdr-pending-badge').forEach(b => b.remove());
 
-    // Re-render sidebar with the now-real comments
+    // Reload the current file to refresh everything
     if (fileData) {
-      await renderCommentsSidebar(fileData.filePath);
-      refreshPendingBadges();
+      await loadFile(fileData.filePath);
     }
 
     toast(`Review submitted (${count} comments)`, 'success');
