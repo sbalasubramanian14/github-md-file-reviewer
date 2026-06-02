@@ -96,6 +96,14 @@ window.GitHubAPI = (() => {
     });
   }
 
+  async function getReviews(owner, repo, num) {
+    return request(`/repos/${owner}/${repo}/pulls/${num}/reviews?per_page=100`);
+  }
+
+  async function getReviewComments(owner, repo, num, reviewId) {
+    return request(`/repos/${owner}/${repo}/pulls/${num}/reviews/${reviewId}/comments?per_page=100`);
+  }
+
   async function createPendingReview(owner, repo, num, commitId) {
     return request(`/repos/${owner}/${repo}/pulls/${num}/reviews`, {
       method: 'POST',
@@ -123,5 +131,5 @@ window.GitHubAPI = (() => {
     });
   }
 
-  return { request, getToken, parsePRUrl, getRawFile, getPR, getPRFiles, getComments, postComment, editComment, deleteComment, replyToComment, createPendingReview, addReviewComment, submitReview, deletePendingReview };
+  return { request, getToken, parsePRUrl, getRawFile, getPR, getPRFiles, getComments, getReviews, getReviewComments, postComment, editComment, deleteComment, replyToComment, createPendingReview, addReviewComment, submitReview, deletePendingReview };
 })();
