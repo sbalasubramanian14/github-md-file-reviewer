@@ -5,10 +5,9 @@ window.MDROverlay = (() => {
   let el = null;
   let comments = [];
 
-  // Review mode state
+  // Review mode state — comments collected locally, submitted in one batch
   let reviewMode = false;
-  let reviewId = null;
-  let pendingComments = []; // server-side pending comments from draft review
+  let pendingComments = []; // local: { path, position, line, body }
 
   function toast(msg, type = 'success') {
     document.querySelectorAll('.mdr-toast').forEach(t => t.remove());
@@ -120,57 +119,21 @@ window.MDROverlay = (() => {
   }
 
   async function startReviewMode() {
-    try {
-      // Check for existing pending review first
-      const currentUser = await getCurrentUser();
-      const reviews = await GitHubAPI.getReviews(pr.owner, pr.repo, pr.pullNumber);
-      const existing = reviews.find(r => r.state === 'PENDING' && r.user?.login === currentUser);
-
-      if (existing) {
-        await resumeReviewMode(existing.id);
-        toast(`Resumed existing pending review (${pendingComments.length} draft comments)`, 'info');
-        return;
-      }
-
-      // Create a new server-side pending review
-      const review = await GitHubAPI.createPendingReview(pr.owner, pr.repo, pr.pullNumber, pr.headSha);
-      reviewId = review.id;
-      reviewMode = true;
-      pendingComments = [];
-      el.querySelector('#mdr-review-bar').hidden = false;
-      updatePendingCount();
-      toast('Review started — comments will be batched on GitHub', 'info');
-    } catch (err) {
-      toast('Failed to start review: ' + err.message, 'error');
-    }
-  }
-
-  async function resumeReviewMode(existingReviewId) {
-    reviewId = existingReviewId;
     reviewMode = true;
-    // Fetch existing pending comments for this review
-    try {
-      pendingComments = await GitHubAPI.getReviewComments(pr.owner, pr.repo, pr.pullNumber, reviewId);
-    } catch { pendingComments = []; }
+    pendingComments = [];
     el.querySelector('#mdr-review-bar').hidden = false;
-    el.querySelectorAll('.mdr-mode-btn').forEach(b => b.classList.remove('active'));
-    el.querySelector('[data-mode="review"]').classList.add('active');
     updatePendingCount();
+    toast('Review mode — add comments, then submit all at once', 'info');
   }
 
   function exitReviewMode() {
     reviewMode = false;
-    reviewId = null;
     pendingComments = [];
     el.querySelector('#mdr-review-bar').hidden = true;
   }
 
   async function discardReview() {
     if (pendingComments.length > 0 && !confirm(`Discard ${pendingComments.length} pending comment(s)?`)) return;
-
-    if (reviewId) {
-      try { await GitHubAPI.deletePendingReview(pr.owner, pr.repo, pr.pullNumber, reviewId); } catch {}
-    }
     exitReviewMode();
     el.querySelectorAll('.mdr-mode-btn').forEach(b => b.classList.remove('active'));
     el.querySelector('[data-mode="comment"]').classList.add('active');
@@ -232,10 +195,16 @@ window.MDROverlay = (() => {
   }
 
   async function submitBatchReview(event, body) {
-    if (!reviewId) throw new Error('No pending review to submit');
-
-    // Submit the existing server-side pending review
-    await GitHubAPI.submitReview(pr.owner, pr.repo, pr.pullNumber, reviewId, { event, body });
+    // Create review with all comments in a single API call
+    await GitHubAPI.request(`/repos/${pr.owner}/${pr.repo}/pulls/${pr.pullNumber}/reviews`, {
+      method: 'POST',
+      body: JSON.stringify({
+        commit_id: pr.headSha,
+        event,
+        body: body || '',
+        comments: pendingComments.map(c => ({ path: c.path, position: c.position, body: c.body }))
+      })
+    });
 
     const count = pendingComments.length;
 
@@ -261,17 +230,6 @@ window.MDROverlay = (() => {
       select.addEventListener('change', () => loadFile(select.value));
 
       comments = await GitHubAPI.getComments(pr.owner, pr.repo, pr.pullNumber);
-
-      // Check for existing pending (draft) review
-      try {
-        const currentUser = await getCurrentUser();
-        const reviews = await GitHubAPI.getReviews(pr.owner, pr.repo, pr.pullNumber);
-        const pending = reviews.find(r => r.state === 'PENDING' && r.user?.login === currentUser);
-        if (pending) {
-          await resumeReviewMode(pending.id);
-          toast(`Resumed pending review (${pendingComments.length} draft comments)`, 'info');
-        }
-      } catch {}
 
       if (files.length > 0) loadFile(files[0].filename);
     } catch (err) {
@@ -491,7 +449,7 @@ window.MDROverlay = (() => {
 
   async function renderCommentsSidebar(filePath) {
     const fileComments = comments.filter(c => c.path === filePath);
-    const filePending = pendingComments.filter(c => (c.path || c.diff_hunk) && (c.path === filePath));
+    const filePending = pendingComments.filter(c => c.path === filePath);
     const list = el.querySelector('#mdr-sidebar-list');
     const currentUser = await getCurrentUser();
 
@@ -530,11 +488,10 @@ window.MDROverlay = (() => {
     // Render pending (draft) comments first
     if (filePending.length > 0) {
       const pendingByLine = new Map();
-      filePending.forEach(c => {
-        const line = c.position || c.original_position || c.line || 0;
-        const arr = pendingByLine.get(line) || [];
-        arr.push(c);
-        pendingByLine.set(line, arr);
+      filePending.forEach((c, idx) => {
+        const arr = pendingByLine.get(c.line) || [];
+        arr.push({ ...c, _idx: idx });
+        pendingByLine.set(c.line, arr);
       });
       const pendingLines = [...pendingByLine.keys()].sort((a, b) => a - b);
 
@@ -545,16 +502,14 @@ window.MDROverlay = (() => {
         html += `<div class="mdr-line-group-header" data-line="${line}">Line ${line}</div>`;
         for (const c of pendingByLine.get(line)) {
           html += `
-            <div class="mdr-comment-card mdr-pending-card" data-pending-id="${c.id}" data-line="${line}">
+            <div class="mdr-comment-card mdr-pending-card" data-pending-idx="${c._idx}" data-line="${c.line}">
               <div class="mdr-comment-meta">
                 <span class="mdr-pending-badge">Draft</span>
-                ${c.user ? `<img src="${c.user.avatar_url}" class="mdr-comment-avatar" alt="">` : ''}
-                ${c.user ? `<strong>${c.user.login}</strong>` : ''}
-                <span class="mdr-comment-line">L${line}</span>
+                <span class="mdr-comment-line">L${c.line}</span>
               </div>
               <div class="mdr-comment-body">${escapeHtml(c.body)}</div>
               <div class="mdr-comment-actions">
-                <button class="mdr-ca-btn mdr-ca-delete mdr-pending-remove" data-pending-id="${c.id}">Remove</button>
+                <button class="mdr-ca-btn mdr-ca-delete mdr-pending-remove" data-pending-idx="${c._idx}">Remove</button>
               </div>
             </div>`;
         }
@@ -657,32 +612,24 @@ window.MDROverlay = (() => {
 
     // Pending comment remove buttons
     list.querySelectorAll('.mdr-pending-remove').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
+      btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const commentId = parseInt(btn.getAttribute('data-pending-id'));
-        btn.disabled = true; btn.textContent = 'Removing...';
-        try {
-          await GitHubAPI.deleteComment(pr.owner, pr.repo, commentId);
-          pendingComments = pendingComments.filter(c => c.id !== commentId);
-          updatePendingCount();
-          // Refresh pending badges
-          el.querySelectorAll('.mdr-markdown .mdr-pending-badge').forEach(b => b.remove());
-          pendingComments.filter(c => c.path === filePath).forEach(c => {
-            const line = c.position || c.original_position || c.line || 0;
-            const target = el.querySelector(`.mdr-markdown [data-line="${line}"]`);
-            if (target && !target.querySelector('.mdr-pending-badge')) {
-              const badge = document.createElement('span');
-              badge.className = 'mdr-pending-badge';
-              badge.textContent = 'Pending';
-              target.appendChild(badge);
-            }
-          });
-          renderCommentsSidebar(filePath);
-          toast('Draft comment removed');
-        } catch (err) {
-          btn.disabled = false; btn.textContent = 'Remove';
-          toast(err.message, 'error');
-        }
+        const idx = parseInt(btn.getAttribute('data-pending-idx'));
+        pendingComments.splice(idx, 1);
+        updatePendingCount();
+        // Refresh pending badges
+        el.querySelectorAll('.mdr-markdown .mdr-pending-badge').forEach(b => b.remove());
+        pendingComments.filter(c => c.path === filePath).forEach(c => {
+          const target = el.querySelector(`.mdr-markdown [data-line="${c.line}"]`);
+          if (target && !target.querySelector('.mdr-pending-badge')) {
+            const badge = document.createElement('span');
+            badge.className = 'mdr-pending-badge';
+            badge.textContent = 'Pending';
+            target.appendChild(badge);
+          }
+        });
+        renderCommentsSidebar(filePath);
+        toast('Draft comment removed');
       });
     });
 
@@ -964,30 +911,21 @@ window.MDROverlay = (() => {
       const text = ta.value.trim();
       if (!text) { ta.style.borderColor = '#ef4444'; return; }
 
-      if (isReview && reviewId) {
-        // Batch mode: post comment which auto-attaches to the pending review
-        sub.disabled = true; sub.textContent = 'Adding...';
-        try {
-          const added = await GitHubAPI.postComment(pr.owner, pr.repo, pr.pullNumber, {
-            body: text, commitId: pr.headSha, path: fileData.filePath, position: line
-          });
-          pendingComments.push(added);
-          updatePendingCount();
-          form.remove();
+      if (isReview) {
+        // Batch mode: collect locally, submit all at once later
+        pendingComments.push({ path: fileData.filePath, position: line, line, body: text });
+        updatePendingCount();
+        form.remove();
 
-          if (!block.querySelector('.mdr-pending-badge')) {
-            const badge = document.createElement('span');
-            badge.className = 'mdr-pending-badge';
-            badge.textContent = 'Pending';
-            block.appendChild(badge);
-          }
-
-          renderCommentsSidebar(fileData.filePath);
-          toast(`Comment added to review (${pendingComments.length} pending)`, 'info');
-        } catch (err) {
-          sub.disabled = false; sub.textContent = 'Add to Review';
-          toast(err.message, 'error');
+        if (!block.querySelector('.mdr-pending-badge')) {
+          const badge = document.createElement('span');
+          badge.className = 'mdr-pending-badge';
+          badge.textContent = 'Pending';
+          block.appendChild(badge);
         }
+
+        renderCommentsSidebar(fileData.filePath);
+        toast(`Comment added to review (${pendingComments.length} pending)`, 'info');
         return;
       }
 
