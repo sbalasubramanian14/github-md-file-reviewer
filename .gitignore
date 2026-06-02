@@ -1,3 +1,8 @@
 div structure examplt.html
 .claude/
 .DS_Store
+*.zip
+*.md.bak
+hris-service-current-state.md
+Employee_Field_Rules_Concept_Note*.md
+tech-spec-*.md
