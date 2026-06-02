@@ -121,7 +121,18 @@ window.MDROverlay = (() => {
 
   async function startReviewMode() {
     try {
-      // Create a server-side pending review
+      // Check for existing pending review first
+      const currentUser = await getCurrentUser();
+      const reviews = await GitHubAPI.getReviews(pr.owner, pr.repo, pr.pullNumber);
+      const existing = reviews.find(r => r.state === 'PENDING' && r.user?.login === currentUser);
+
+      if (existing) {
+        await resumeReviewMode(existing.id);
+        toast(`Resumed existing pending review (${pendingComments.length} draft comments)`, 'info');
+        return;
+      }
+
+      // Create a new server-side pending review
       const review = await GitHubAPI.createPendingReview(pr.owner, pr.repo, pr.pullNumber, pr.headSha);
       reviewId = review.id;
       reviewMode = true;
