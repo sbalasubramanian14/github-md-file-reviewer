@@ -1,4 +1,3 @@
-if (typeof window.MDROverlay !== 'undefined') { /* already loaded */ } else
 window.MDROverlay = (() => {
   let pr = null;
   let files = null;
@@ -155,68 +154,12 @@ window.MDROverlay = (() => {
     const container = document.createElement('div');
     container.innerHTML = html;
 
-    const blockTags = new Set(['H1','H2','H3','H4','H5','H6','P','LI','BLOCKQUOTE','PRE','TABLE','UL','OL','TR']);
-    const topBlocks = [];
-
-    // Collect top-level block elements in document order
-    function collectBlocks(parent) {
-      for (const child of parent.children) {
-        if (blockTags.has(child.tagName)) {
-          topBlocks.push(child);
-          if (child.tagName === 'UL' || child.tagName === 'OL') {
-            for (const li of child.querySelectorAll('li')) {
-              topBlocks.push(li);
-            }
-          }
-        }
-      }
-    }
-    collectBlocks(container);
-
-    // Map tokens to block elements sequentially
-    // Token types: heading, paragraph, list, blockquote, code, table, space, hr
-    let mapIdx = 0;
-    for (const block of topBlocks) {
-      if (mapIdx >= lineMap.length) break;
-      const tag = block.tagName;
-
-      // Find the next matching token type
-      const blockType = tagToTokenType(tag);
-      if (!blockType) continue;
-
-      for (let j = mapIdx; j < lineMap.length; j++) {
-        if (tokenTypeMatches(lineMap[j].type, blockType)) {
-          block.setAttribute('data-line', lineMap[j].startLine);
-          block.style.position = 'relative';
-
-          // For list items, find sub-items in the list token
-          if (lineMap[j].type === 'list' && tag === 'LI') {
-            // LI elements come from list tokens — assign line from list items within
-          }
-
-          mapIdx = j + 1;
-          break;
-        }
-      }
-    }
-
-    // Second pass: assign lines to LI elements that didn't get one
-    // by interpolating from their parent list and raw source
-    assignMissedLines(container, raw);
+    // Assign data-line to ALL block elements using direct text search
+    // against raw markdown lines. This is more reliable than sequential
+    // token matching which drifts when tokens don't align 1:1 with DOM.
+    assignAllLines(container, raw);
 
     return container.innerHTML;
-  }
-
-  function tagToTokenType(tag) {
-    const map = { H1:'heading',H2:'heading',H3:'heading',H4:'heading',H5:'heading',H6:'heading',
-      P:'paragraph', BLOCKQUOTE:'blockquote', PRE:'code', TABLE:'table', UL:'list', OL:'list', LI:'listitem', TR:'table' };
-    return map[tag] || null;
-  }
-
-  function tokenTypeMatches(tokenType, blockType) {
-    if (tokenType === blockType) return true;
-    if (blockType === 'listitem' && tokenType === 'list') return true;
-    return false;
   }
 
   function stripMarkdown(text) {
@@ -235,62 +178,108 @@ window.MDROverlay = (() => {
       .toLowerCase();
   }
 
-  function assignMissedLines(container, raw) {
+  function assignAllLines(container, raw) {
     const lines = raw.split('\n');
-    const usedLines = new Set();
-    container.querySelectorAll('[data-line]').forEach(e => usedLines.add(parseInt(e.getAttribute('data-line'))));
-
-    // Pre-process raw lines: strip markdown for comparison
     const cleanLines = lines.map(l => stripMarkdown(l));
+    const usedLines = new Set();
+    // Also strip pipe-delimited lines for table matching
+    const cleanPipeLines = lines.map(l => {
+      if (!l.includes('|')) return '';
+      return l.replace(/\*\*(.+?)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1').replace(/\\/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+    });
 
-    function matchNode(node) {
-      if (node.getAttribute('data-line')) return;
-      const domText = node.textContent.trim().substring(0, 60).toLowerCase().replace(/[()]/g, '').replace(/\s+/g, ' ');
-      if (!domText || domText.length < 3) return;
+    // Collect ALL commentable elements in document order
+    const allElements = [];
+    container.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,tr').forEach(node => allElements.push(node));
+    allElements.sort((a, b) => {
+      const pos = a.compareDocumentPosition(b);
+      return (pos & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : (pos & Node.DOCUMENT_POSITION_PRECEDING) ? 1 : 0;
+    });
 
-      for (let i = 0; i < cleanLines.length; i++) {
-        if (usedLines.has(i + 1)) continue;
-        const cl = cleanLines[i];
-        if (cl.length < 3) continue;
+    // Hint: expected line number advances as we match, but we always
+    // search the full file. The hint just prioritizes nearby lines.
+    let hint = 0;
 
-        // Try multiple matching strategies
-        const matchLen = Math.min(25, cl.length, domText.length);
-        if (matchLen < 3) continue;
-
-        const clSub = cl.substring(0, matchLen);
-        const domSub = domText.substring(0, matchLen);
-
-        if (domSub === clSub || domText.includes(clSub) || cl.includes(domSub)) {
-          node.setAttribute('data-line', i + 1);
-          node.style.position = 'relative';
-          usedLines.add(i + 1);
-          return;
+    function searchLines(needle, startFrom, filterFn) {
+      // Search forward from hint first, then wrap around
+      for (let pass = 0; pass < 2; pass++) {
+        const start = pass === 0 ? startFrom : 0;
+        const end = pass === 0 ? lines.length : startFrom;
+        for (let i = start; i < end; i++) {
+          if (usedLines.has(i + 1)) continue;
+          if (filterFn && !filterFn(i)) continue;
+          if (needle(i)) return i;
         }
       }
+      return -1;
     }
 
-    // Match all unassigned block elements
-    container.querySelectorAll('li:not([data-line])').forEach(matchNode);
-    container.querySelectorAll('h1:not([data-line]),h2:not([data-line]),h3:not([data-line]),h4:not([data-line]),h5:not([data-line]),h6:not([data-line])').forEach(matchNode);
-    container.querySelectorAll('p:not([data-line])').forEach(matchNode);
-    container.querySelectorAll('pre:not([data-line])').forEach(matchNode);
+    for (const node of allElements) {
+      const tag = node.tagName;
+      let matched = -1;
 
-    // Table rows: match by first cell content against pipe-delimited lines
-    container.querySelectorAll('tr:not([data-line])').forEach(tr => {
-      const cells = [...tr.querySelectorAll('td, th')].map(c => c.textContent.trim().toLowerCase()).filter(Boolean);
-      if (cells.length === 0) return;
-      const needle = cells[0].substring(0, 20);
-      for (let i = 0; i < lines.length; i++) {
-        if (usedLines.has(i + 1)) continue;
-        if (!lines[i].includes('|')) continue;
-        if (lines[i].toLowerCase().includes(needle)) {
-          tr.setAttribute('data-line', i + 1);
-          tr.style.position = 'relative';
-          usedLines.add(i + 1);
-          break;
-        }
+      if (tag === 'TR') {
+        // Table row: match cell content against pipe-delimited lines
+        const cells = [...node.querySelectorAll('td, th')].map(c =>
+          c.textContent.trim().toLowerCase().replace(/\s+/g, ' ')
+        ).filter(Boolean);
+        if (cells.length === 0) continue;
+
+        // Skip separator rows (----, :---:, etc.)
+        if (cells.every(c => /^[-:\s]+$/.test(c))) continue;
+
+        const needle = cells[0].substring(0, 25);
+        if (needle.length < 2) continue;
+
+        matched = searchLines(
+          i => cleanPipeLines[i].includes(needle),
+          hint,
+          i => lines[i].includes('|')
+        );
+
+      } else if (tag === 'PRE') {
+        // Code block: match against ``` fence
+        const codeText = node.textContent.trim().substring(0, 50).toLowerCase().replace(/\s+/g, ' ');
+        matched = searchLines(
+          i => {
+            if (!lines[i].startsWith('```')) return false;
+            // Verify by checking code content
+            const content = [];
+            for (let j = i + 1; j < lines.length && !lines[j].startsWith('```'); j++) content.push(lines[j]);
+            const block = content.join(' ').trim().substring(0, 30).toLowerCase().replace(/\s+/g, ' ');
+            return !block || !codeText || codeText.startsWith(block.substring(0, 12)) || block.startsWith(codeText.substring(0, 12));
+          },
+          hint,
+          null
+        );
+
+      } else {
+        // Heading, paragraph, list item, blockquote
+        const domText = node.textContent.trim().substring(0, 60).toLowerCase().replace(/[()]/g, '').replace(/\s+/g, ' ');
+        if (!domText || domText.length < 2) continue;
+
+        matched = searchLines(
+          i => {
+            const cl = cleanLines[i];
+            if (cl.length < 2) return false;
+            const len = Math.min(20, cl.length, domText.length);
+            if (len < 2) return false;
+            const a = cl.substring(0, len);
+            const b = domText.substring(0, len);
+            return a === b || domText.includes(a) || cl.includes(b);
+          },
+          hint,
+          null
+        );
       }
-    });
+
+      if (matched >= 0) {
+        node.setAttribute('data-line', matched + 1);
+        node.style.position = 'relative';
+        usedLines.add(matched + 1);
+        hint = matched + 1;
+      }
+    }
   }
 
   // --- Comment sidebar ---
