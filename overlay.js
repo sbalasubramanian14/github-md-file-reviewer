@@ -247,8 +247,8 @@ window.MDROverlay = (() => {
         btn.textContent = 'Submitting...';
 
         try {
-          await submitBatchReview(event, body);
           dialog.remove();
+          await submitBatchReview(event, body);
         } catch (err) {
           dialog.querySelectorAll('button').forEach(b => { b.disabled = false; });
           btn.textContent = btn.getAttribute('data-event');
