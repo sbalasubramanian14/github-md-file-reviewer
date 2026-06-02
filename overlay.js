@@ -81,7 +81,7 @@ window.MDROverlay = (() => {
         </div>
       </div>
       <div class="mdr-review-bar" id="mdr-review-bar" hidden>
-        <span class="mdr-review-bar-text"><span id="mdr-pending-count">0</span> pending comments <span class="mdr-review-warn">— don't refresh, drafts are stored locally</span></span>
+        <span class="mdr-review-bar-text"><span id="mdr-pending-count">0</span> pending comments <span class="mdr-review-warn">— drafts saved locally, persist across refresh</span></span>
         <div class="mdr-review-bar-actions">
           <button class="mdr-rb-btn mdr-rb-discard" id="mdr-review-discard">Discard Review</button>
           <button class="mdr-rb-btn mdr-rb-submit" id="mdr-review-submit">Submit Review</button>
@@ -135,6 +135,7 @@ window.MDROverlay = (() => {
   async function discardReview() {
     if (pendingComments.length > 0 && !confirm(`Discard ${pendingComments.length} pending comment(s)?`)) return;
     exitReviewMode();
+    savePendingToStorage();
     el.querySelectorAll('.mdr-mode-btn').forEach(b => b.classList.remove('active'));
     el.querySelector('[data-mode="comment"]').classList.add('active');
     el.querySelectorAll('.mdr-pending-badge').forEach(b => b.remove());
@@ -145,6 +146,55 @@ window.MDROverlay = (() => {
   function updatePendingCount() {
     const countEl = el.querySelector('#mdr-pending-count');
     if (countEl) countEl.textContent = pendingComments.length;
+  }
+
+  function addPendingBadge(block, line) {
+    if (block.querySelector('.mdr-pending-badge')) return;
+    const badge = document.createElement('span');
+    badge.className = 'mdr-pending-badge';
+    badge.textContent = 'Pending';
+    badge.style.cursor = 'pointer';
+    badge.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const group = el.querySelector(`.mdr-pending-section .mdr-line-group[data-group-line="${line}"]`);
+      if (group) {
+        group.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        group.classList.add('mdr-flash');
+        setTimeout(() => group.classList.remove('mdr-flash'), 1500);
+      }
+    });
+    block.appendChild(badge);
+  }
+
+  function refreshPendingBadges() {
+    if (!el || !fileData) return;
+    el.querySelectorAll('.mdr-markdown .mdr-pending-badge').forEach(b => b.remove());
+    pendingComments.filter(c => c.path === fileData.filePath).forEach(c => {
+      const target = el.querySelector(`.mdr-markdown [data-line="${c.line}"]`);
+      if (target) addPendingBadge(target, c.line);
+    });
+  }
+
+  // --- Persistence: store pending comments in chrome.storage.local ---
+
+  function getStorageKey() {
+    return `mdr_pending_${pr.owner}_${pr.repo}_${pr.pullNumber}`;
+  }
+
+  function savePendingToStorage() {
+    const key = getStorageKey();
+    if (pendingComments.length === 0) {
+      chrome.storage.local.remove([key]);
+    } else {
+      chrome.storage.local.set({ [key]: pendingComments });
+    }
+  }
+
+  async function loadPendingFromStorage() {
+    const key = getStorageKey();
+    return new Promise(r => {
+      chrome.storage.local.get([key], d => r(d[key] || []));
+    });
   }
 
   function showSubmitDialog() {
@@ -212,6 +262,7 @@ window.MDROverlay = (() => {
     comments = await GitHubAPI.getComments(pr.owner, pr.repo, pr.pullNumber);
 
     exitReviewMode();
+    savePendingToStorage();
     el.querySelectorAll('.mdr-mode-btn').forEach(b => b.classList.remove('active'));
     el.querySelector('[data-mode="comment"]').classList.add('active');
     el.querySelectorAll('.mdr-pending-badge').forEach(b => b.remove());
@@ -230,6 +281,18 @@ window.MDROverlay = (() => {
       select.addEventListener('change', () => loadFile(select.value));
 
       comments = await GitHubAPI.getComments(pr.owner, pr.repo, pr.pullNumber);
+
+      // Restore pending comments from storage
+      const saved = await loadPendingFromStorage();
+      if (saved.length > 0) {
+        pendingComments = saved;
+        reviewMode = true;
+        el.querySelector('#mdr-review-bar').hidden = false;
+        el.querySelectorAll('.mdr-mode-btn').forEach(b => b.classList.remove('active'));
+        el.querySelector('[data-mode="review"]').classList.add('active');
+        updatePendingCount();
+        toast(`Restored ${saved.length} pending review comments`, 'info');
+      }
 
       if (files.length > 0) loadFile(files[0].filename);
     } catch (err) {
@@ -254,6 +317,7 @@ window.MDROverlay = (() => {
 
       renderCommentsSidebar(filePath);
       attachCommentButtons();
+      refreshPendingBadges();
     } catch (err) {
       setContent(`<div class="mdr-loading"><span class="mdr-error">${err.message}</span></div>`);
     }
@@ -617,6 +681,7 @@ window.MDROverlay = (() => {
         const idx = parseInt(btn.getAttribute('data-pending-idx'));
         pendingComments.splice(idx, 1);
         updatePendingCount();
+        savePendingToStorage();
         // Refresh pending badges
         el.querySelectorAll('.mdr-markdown .mdr-pending-badge').forEach(b => b.remove());
         pendingComments.filter(c => c.path === filePath).forEach(c => {
@@ -917,12 +982,8 @@ window.MDROverlay = (() => {
         updatePendingCount();
         form.remove();
 
-        if (!block.querySelector('.mdr-pending-badge')) {
-          const badge = document.createElement('span');
-          badge.className = 'mdr-pending-badge';
-          badge.textContent = 'Pending';
-          block.appendChild(badge);
-        }
+        addPendingBadge(block, line);
+        savePendingToStorage();
 
         renderCommentsSidebar(fileData.filePath);
         toast(`Comment added to review (${pendingComments.length} pending)`, 'info');
