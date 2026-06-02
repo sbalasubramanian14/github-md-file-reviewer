@@ -1000,7 +1000,9 @@ window.MDROverlay = (() => {
         <button class="mdr-btn-submit">${submitLabel}</button>
       </div>`;
 
-    block.after(form);
+    // If block is inside a <pre> (code line), insert after the <pre> parent
+    const insertAfter = block.closest('pre') || block;
+    insertAfter.after(form);
     const ta = form.querySelector('textarea');
     const sub = form.querySelector('.mdr-btn-submit');
     setTimeout(() => ta.focus(), 50);
