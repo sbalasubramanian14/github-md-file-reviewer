@@ -271,22 +271,7 @@ window.MDROverlay = (() => {
     });
 
     const count = pendingComments.length;
-    const currentUser = await getCurrentUser();
-    const userData = await new Promise(r => chrome.storage.local.get(['github_user'], d => r(d.github_user || {})));
-
-    // Immediately add submitted comments to local state so they show up right away
-    // (GitHub API has propagation delay before GET returns them)
-    for (const pc of pendingComments) {
-      comments.push({
-        id: Date.now() + Math.random(),
-        body: pc.body,
-        path: pc.path,
-        line: pc.line,
-        position: pc.position,
-        user: { login: currentUser || 'you', avatar_url: userData.avatar_url || '' },
-        created_at: new Date().toISOString()
-      });
-    }
+    const prevCount = comments.length;
 
     exitReviewMode();
     savePendingToStorage();
@@ -294,19 +279,24 @@ window.MDROverlay = (() => {
     el.querySelector('[data-mode="comment"]').classList.add('active');
     el.querySelectorAll('.mdr-pending-badge').forEach(b => b.remove());
 
-    if (fileData) {
-      await loadFile(fileData.filePath);
+    toast(`Review submitted (${count} comments) — syncing...`, 'info');
+
+    // Show loader in sidebar while polling
+    const list = el.querySelector('#mdr-sidebar-list');
+    if (list) list.innerHTML = '<div class="mdr-loading"><div class="mdr-spinner"></div><span>Syncing comments from GitHub...</span></div>';
+
+    // Poll until new comments appear
+    const expectedCount = prevCount + count;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await new Promise(r => setTimeout(r, 2000));
+      comments = await GitHubAPI.getComments(pr.owner, pr.repo, pr.pullNumber);
+      if (comments.length >= expectedCount) break;
+      if (list) list.querySelector('span').textContent = `Syncing comments from GitHub... (attempt ${attempt + 2})`;
     }
 
-    toast(`Review submitted (${count} comments)`, 'success');
+    if (fileData) await loadFile(fileData.filePath);
 
-    // Refresh from API in background after delay to get real comment IDs
-    setTimeout(async () => {
-      try {
-        comments = await GitHubAPI.getComments(pr.owner, pr.repo, pr.pullNumber);
-        if (fileData) renderCommentsSidebar(fileData.filePath);
-      } catch {}
-    }, 5000);
+    toast(`Review synced (${count} comments)`, 'success');
   }
 
   async function loadPR() {
