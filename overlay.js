@@ -954,11 +954,11 @@ window.MDROverlay = (() => {
       if (!text) { ta.style.borderColor = '#ef4444'; return; }
 
       if (isReview && reviewId) {
-        // Batch mode: add to server-side pending review
+        // Batch mode: post comment which auto-attaches to the pending review
         sub.disabled = true; sub.textContent = 'Adding...';
         try {
-          const added = await GitHubAPI.addReviewComment(pr.owner, pr.repo, pr.pullNumber, reviewId, {
-            path: fileData.filePath, position: line, body: text
+          const added = await GitHubAPI.postComment(pr.owner, pr.repo, pr.pullNumber, {
+            body: text, commitId: pr.headSha, path: fileData.filePath, position: line
           });
           pendingComments.push(added);
           updatePendingCount();
