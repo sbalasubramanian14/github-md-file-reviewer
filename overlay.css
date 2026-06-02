@@ -90,11 +90,35 @@
 }
 .mdr-comment-card:hover { background: var(--bg-hover); }
 .mdr-comment-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 11px; color: var(--text-secondary); }
-.mdr-comment-avatar { width: 18px; height: 18px; border-radius: 50%; }
+.mdr-comment-avatar { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border); }
 .mdr-comment-meta strong { color: var(--text); font-size: 12px; }
 .mdr-comment-line { background: var(--accent); color: white; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 600; }
 .mdr-comment-time { margin-left: auto; }
 .mdr-comment-body { font-size: 12px; color: var(--text); line-height: 1.5; word-break: break-word; }
+
+/* Line groups */
+.mdr-line-group { margin-bottom: 10px; }
+.mdr-line-group-header {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--accent); padding: 4px 6px; cursor: pointer; border-radius: 4px;
+}
+.mdr-line-group-header:hover { background: var(--bg-hover); }
+
+/* Reply cards */
+.mdr-reply-card { margin-left: 16px; border-left: 2px solid var(--accent); }
+
+/* Thread toggle */
+.mdr-thread-toggle {
+  font-size: 11px; color: var(--accent); cursor: pointer; padding: 3px 8px;
+  margin-left: 16px; display: flex; align-items: center; gap: 4px;
+  border-radius: 4px; transition: background 0.15s;
+}
+.mdr-thread-toggle:hover { background: var(--bg-hover); }
+.mdr-thread-arrow { font-size: 9px; transition: transform 0.15s; }
+
+/* Reply button */
+.mdr-ca-reply { margin: 2px 0 6px 0; }
+.mdr-reply-form { margin: 4px 0 8px; }
 
 /* Comment actions (edit/delete) */
 .mdr-comment-actions {
@@ -154,8 +178,45 @@
 .mdr-markdown a:hover { text-decoration: underline; }
 
 /* Hoverable blocks with comment button */
-.mdr-markdown [data-line] { position: relative; transition: background 0.1s; border-radius: 3px; padding: 1px 4px; }
+.mdr-markdown [data-line] { position: relative; transition: background 0.15s; border-radius: 3px; padding: 1px 4px; }
 .mdr-markdown [data-line]:hover { background: var(--bg-hover); }
+
+/* Highlighted lines that have comments */
+.mdr-markdown [data-has-comment="true"] {
+  background: rgba(99, 102, 241, 0.06);
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
+}
+.mdr-markdown [data-has-comment="true"]:hover {
+  background: rgba(99, 102, 241, 0.12);
+}
+
+/* Inline comment badge on content lines */
+.mdr-inline-badge {
+  position: absolute; right: -8px; top: 2px;
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 7px 2px 3px; border: none; border-radius: 12px;
+  background: var(--accent); color: white;
+  font-size: 10px; font-weight: 700; cursor: pointer;
+  opacity: 0.85; transition: opacity 0.15s, transform 0.15s;
+  z-index: 5; font-family: inherit;
+}
+.mdr-inline-badge:hover { opacity: 1; transform: scale(1.08); }
+.mdr-badge-avatar {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 1.5px solid white; margin-left: -4px;
+}
+.mdr-badge-avatar:first-child { margin-left: 0; }
+.mdr-badge-count { margin-left: 2px; }
+
+/* Table rows are commentable */
+.mdr-markdown tr[data-line] { cursor: pointer; }
+.mdr-markdown tr[data-line]:hover { background: var(--bg-hover) !important; }
+.mdr-markdown tr[data-line] > td:first-child { position: relative; }
+.mdr-markdown tr[data-line] > .mdr-comment-btn,
+.mdr-markdown tr[data-line] .mdr-comment-btn {
+  left: -28px; top: 50%; transform: translateY(-50%);
+}
 
 .mdr-comment-btn {
   position: absolute; left: -34px; top: 2px;

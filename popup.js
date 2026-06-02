@@ -20,7 +20,9 @@ function setConnected(user) {
   statusText.textContent = `Connected as ${user.login}`;
   tokenForm.hidden = true;
   connectedInfo.hidden = false;
-  document.getElementById('user-avatar').src = user.avatar_url;
+  const avatar = document.getElementById('user-avatar');
+  avatar.src = user.avatar_url;
+  avatar.hidden = false;
   document.getElementById('user-name').textContent = user.name || user.login;
   document.getElementById('user-login').textContent = `@${user.login}`;
 }

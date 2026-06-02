@@ -24,7 +24,7 @@
         </svg>
         <h1>MD Reviewer</h1>
       </div>
-      <span class="version">v1.0</span>
+      <span class="version">v2.0</span>
     </header>
 
     <div id="auth-section" class="section">
@@ -59,7 +59,7 @@
 
       <div id="connected-info" class="connected-info" hidden>
         <div class="user-card">
-          <img id="user-avatar" class="avatar" src="" alt="Avatar">
+          <img id="user-avatar" class="avatar" alt="Avatar" hidden>
           <div class="user-details">
             <span id="user-name" class="user-name"></span>
             <span id="user-login" class="user-login"></span>
@@ -75,15 +75,15 @@
       <h3>How to use</h3>
       <ol class="usage-steps">
         <li>Open any PR with <code>.md</code> files</li>
-        <li>Go to the <strong>Files changed</strong> tab</li>
-        <li>Click the rendered diff toggle <kbd>📄</kbd></li>
-        <li>Hover over any element to see the <span class="comment-icon-inline">💬</span> button</li>
-        <li>Click it to leave a review comment</li>
+        <li>Click the purple <strong>MD Review</strong> button (bottom-right)</li>
+        <li>Browse rendered markdown with the file selector</li>
+        <li>Hover any element and click <span class="comment-icon-inline">💬</span> to comment</li>
+        <li>View, reply, edit, or delete comments in the sidebar</li>
       </ol>
     </div>
 
     <footer class="footer">
-      <span>Works on <code>github.com/*/pull/*/files</code></span>
+      <span>Works on any <code>github.com/*/pull/*</code> page</span>
     </footer>
   </div>
 

@@ -155,7 +155,7 @@ window.MDROverlay = (() => {
     const container = document.createElement('div');
     container.innerHTML = html;
 
-    const blockTags = new Set(['H1','H2','H3','H4','H5','H6','P','LI','BLOCKQUOTE','PRE','TABLE','UL','OL']);
+    const blockTags = new Set(['H1','H2','H3','H4','H5','H6','P','LI','BLOCKQUOTE','PRE','TABLE','UL','OL','TR']);
     const topBlocks = [];
 
     // Collect top-level block elements in document order
@@ -202,14 +202,14 @@ window.MDROverlay = (() => {
 
     // Second pass: assign lines to LI elements that didn't get one
     // by interpolating from their parent list and raw source
-    assignListItemLines(container, raw);
+    assignMissedLines(container, raw);
 
     return container.innerHTML;
   }
 
   function tagToTokenType(tag) {
     const map = { H1:'heading',H2:'heading',H3:'heading',H4:'heading',H5:'heading',H6:'heading',
-      P:'paragraph', BLOCKQUOTE:'blockquote', PRE:'code', TABLE:'table', UL:'list', OL:'list', LI:'listitem' };
+      P:'paragraph', BLOCKQUOTE:'blockquote', PRE:'code', TABLE:'table', UL:'list', OL:'list', LI:'listitem', TR:'table' };
     return map[tag] || null;
   }
 
@@ -219,37 +219,47 @@ window.MDROverlay = (() => {
     return false;
   }
 
-  function assignListItemLines(container, raw) {
+  function assignMissedLines(container, raw) {
     const lines = raw.split('\n');
+    const usedLines = new Set();
+    container.querySelectorAll('[data-line]').forEach(e => usedLines.add(parseInt(e.getAttribute('data-line'))));
 
-    container.querySelectorAll('li').forEach(li => {
-      if (li.getAttribute('data-line')) return;
-
-      const text = li.textContent.trim().substring(0, 40);
-      if (!text) return;
-
-      // Search raw lines for this text
-      const cleanText = text.toLowerCase().replace(/\s+/g, ' ');
-      for (let i = 0; i < lines.length; i++) {
-        const lineLower = lines[i].toLowerCase().replace(/[*_`\[\]()#>-]/g, '').replace(/^\s*\d+\.\s*/, '').replace(/\s+/g, ' ').trim();
-        if (lineLower && cleanText.startsWith(lineLower.substring(0, 25))) {
-          li.setAttribute('data-line', i + 1);
-          li.style.position = 'relative';
-          break;
+    function findLine(text, selectors) {
+      container.querySelectorAll(selectors).forEach(node => {
+        if (node.getAttribute('data-line')) return;
+        const clean = (text || node.textContent).trim().substring(0, 50).toLowerCase().replace(/\s+/g, ' ');
+        if (!clean) return;
+        for (let i = 0; i < lines.length; i++) {
+          if (usedLines.has(i + 1)) continue;
+          const lineLower = lines[i].replace(/^[#>*\-+\d.|\s`_\[\]()]+/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+          if (lineLower.length > 3 && clean.startsWith(lineLower.substring(0, 25))) {
+            node.setAttribute('data-line', i + 1);
+            node.style.position = 'relative';
+            usedLines.add(i + 1);
+            break;
+          }
         }
-      }
-    });
+      });
+    }
 
-    // Also handle paragraphs/headings that missed the first pass
-    container.querySelectorAll('h1,h2,h3,h4,h5,h6,p').forEach(el => {
-      if (el.getAttribute('data-line')) return;
-      const text = el.textContent.trim().substring(0, 50).toLowerCase().replace(/\s+/g, ' ');
-      if (!text) return;
+    findLine(null, 'li:not([data-line])');
+    findLine(null, 'h1:not([data-line]),h2:not([data-line]),h3:not([data-line]),h4:not([data-line]),h5:not([data-line]),h6:not([data-line])');
+    findLine(null, 'p:not([data-line])');
+
+    // Table rows: match by pipe-separated cell content
+    container.querySelectorAll('tr').forEach(tr => {
+      if (tr.getAttribute('data-line')) return;
+      const cells = [...tr.querySelectorAll('td, th')].map(c => c.textContent.trim().toLowerCase()).filter(Boolean);
+      if (cells.length === 0) return;
+      const needle = cells[0].substring(0, 20);
       for (let i = 0; i < lines.length; i++) {
-        const lineLower = lines[i].replace(/^#+\s*/, '').replace(/[*_`\[\]()]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
-        if (lineLower && text.startsWith(lineLower.substring(0, 30))) {
-          el.setAttribute('data-line', i + 1);
-          el.style.position = 'relative';
+        if (usedLines.has(i + 1)) continue;
+        if (!lines[i].includes('|')) continue;
+        const lineLower = lines[i].toLowerCase();
+        if (lineLower.includes(needle)) {
+          tr.setAttribute('data-line', i + 1);
+          tr.style.position = 'relative';
+          usedLines.add(i + 1);
           break;
         }
       }
@@ -267,6 +277,10 @@ window.MDROverlay = (() => {
     } catch { return null; }
   }
 
+  function getCommentLine(c) {
+    return c.line || c.original_line || c.position || 0;
+  }
+
   async function renderCommentsSidebar(filePath) {
     const fileComments = comments.filter(c => c.path === filePath);
     const list = el.querySelector('#mdr-sidebar-list');
@@ -274,49 +288,97 @@ window.MDROverlay = (() => {
 
     el.querySelector('.mdr-sidebar-header').textContent = `Comments (${fileComments.length})`;
 
+    // Highlight commented lines in content
+    highlightCommentedLines(filePath);
+
     if (fileComments.length === 0) {
       list.innerHTML = '<span class="mdr-sidebar-empty">No comments on this file</span>';
       return;
     }
 
-    list.innerHTML = fileComments.map(c => {
-      const isOwner = currentUser && c.user.login === currentUser;
-      const line = c.line || c.original_line || c.position || '?';
-      return `
-        <div class="mdr-comment-card" data-comment-id="${c.id}" data-line="${line}">
-          <div class="mdr-comment-meta">
-            <img src="${c.user.avatar_url}" class="mdr-comment-avatar" alt="">
-            <strong>${c.user.login}</strong>
-            <span class="mdr-comment-line">L${line}</span>
-            <span class="mdr-comment-time">${timeAgo(c.created_at)}</span>
-          </div>
-          <div class="mdr-comment-body" id="mdr-cbody-${c.id}">${escapeHtml(c.body)}</div>
-          ${isOwner ? `
-            <div class="mdr-comment-actions">
-              <button class="mdr-ca-btn mdr-ca-edit" data-id="${c.id}" title="Edit">
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Zm1.06 1.06L10.811 3.75l1.439 1.44 1.263-1.263a.25.25 0 0 0 0-.354l-1.086-1.086a.25.25 0 0 0-.354 0Z"/></svg>
-                Edit
-              </button>
-              <button class="mdr-ca-btn mdr-ca-delete" data-id="${c.id}" title="Delete">
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15ZM6.5 1.75V3h3V1.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Z"/></svg>
-                Delete
-              </button>
-            </div>
-          ` : ''}
-        </div>`;
-    }).join('');
+    // Build threads: root comments + replies
+    const roots = fileComments.filter(c => !c.in_reply_to_id);
+    const replyMap = new Map(); // rootId -> [replies]
+    fileComments.filter(c => c.in_reply_to_id).forEach(c => {
+      const arr = replyMap.get(c.in_reply_to_id) || [];
+      arr.push(c);
+      replyMap.set(c.in_reply_to_id, arr);
+    });
 
-    // Click card body to scroll to line
+    // Group by line, sort by line number
+    const lineGroups = new Map(); // line -> [root comments]
+    roots.forEach(c => {
+      const line = getCommentLine(c);
+      const arr = lineGroups.get(line) || [];
+      arr.push(c);
+      lineGroups.set(line, arr);
+    });
+    const sortedLines = [...lineGroups.keys()].sort((a, b) => a - b);
+
+    let html = '';
+    for (const line of sortedLines) {
+      const group = lineGroups.get(line);
+      group.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+      html += `<div class="mdr-line-group" data-group-line="${line}">`;
+      html += `<div class="mdr-line-group-header" data-line="${line}">Line ${line}</div>`;
+
+      for (const root of group) {
+        const replies = (replyMap.get(root.id) || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        const hasReplies = replies.length > 0;
+
+        html += renderCommentCard(root, currentUser, false);
+
+        if (hasReplies) {
+          html += `<div class="mdr-thread-toggle" data-thread="${root.id}">
+            <span class="mdr-thread-arrow">&#9654;</span> ${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}
+          </div>`;
+          html += `<div class="mdr-thread-replies" id="mdr-thread-${root.id}" hidden>`;
+          for (const reply of replies) {
+            html += renderCommentCard(reply, currentUser, true);
+          }
+          html += `</div>`;
+        }
+
+        html += `<button class="mdr-ca-btn mdr-ca-reply" data-reply-to="${root.id}" data-line="${getCommentLine(root)}">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M6.78 1.97a.75.75 0 0 1 0 1.06L3.81 6h6.44A4.75 4.75 0 0 1 15 10.75v2.5a.75.75 0 0 1-1.5 0v-2.5a3.25 3.25 0 0 0-3.25-3.25H3.81l2.97 2.97a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L1.47 7.28a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 0Z"/></svg>
+          Reply
+        </button>`;
+      }
+      html += `</div>`;
+    }
+
+    list.innerHTML = html;
+
+    // --- Event listeners ---
+
+    // Thread toggles
+    list.querySelectorAll('.mdr-thread-toggle').forEach(toggle => {
+      toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const threadId = toggle.getAttribute('data-thread');
+        const replies = el.querySelector(`#mdr-thread-${threadId}`);
+        const arrow = toggle.querySelector('.mdr-thread-arrow');
+        if (replies.hidden) {
+          replies.hidden = false;
+          arrow.innerHTML = '&#9660;';
+        } else {
+          replies.hidden = true;
+          arrow.innerHTML = '&#9654;';
+        }
+      });
+    });
+
+    // Line group headers → scroll to line
+    list.querySelectorAll('.mdr-line-group-header').forEach(header => {
+      header.addEventListener('click', () => scrollToLine(header.getAttribute('data-line')));
+    });
+
+    // Comment cards → scroll to line
     list.querySelectorAll('.mdr-comment-card').forEach(card => {
       card.addEventListener('click', (e) => {
-        if (e.target.closest('.mdr-ca-btn') || e.target.closest('.mdr-edit-form')) return;
-        const line = card.getAttribute('data-line');
-        const target = el.querySelector(`[data-line="${line}"]`);
-        if (target) {
-          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          target.classList.add('mdr-flash');
-          setTimeout(() => target.classList.remove('mdr-flash'), 1500);
-        }
+        if (e.target.closest('.mdr-ca-btn') || e.target.closest('.mdr-edit-form') || e.target.closest('.mdr-delete-confirm')) return;
+        scrollToLine(card.getAttribute('data-line'));
       });
     });
 
@@ -325,8 +387,8 @@ window.MDROverlay = (() => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = parseInt(btn.getAttribute('data-id'));
-        const comment = comments.find(c => c.id === id);
-        if (comment) startEdit(id, comment.body);
+        const c = comments.find(c => c.id === id);
+        if (c) startEdit(id, c.body);
       });
     });
 
@@ -334,9 +396,157 @@ window.MDROverlay = (() => {
     list.querySelectorAll('.mdr-ca-delete').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const id = parseInt(btn.getAttribute('data-id'));
-        confirmDelete(id);
+        confirmDelete(parseInt(btn.getAttribute('data-id')));
       });
+    });
+
+    // Reply buttons
+    list.querySelectorAll('.mdr-ca-reply').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openReplyForm(parseInt(btn.getAttribute('data-reply-to')), parseInt(btn.getAttribute('data-line')));
+      });
+    });
+  }
+
+  function renderCommentCard(c, currentUser, isReply) {
+    const isOwner = currentUser && c.user.login === currentUser;
+    const line = getCommentLine(c);
+    const color = getUserColor(c.user.login);
+    return `
+      <div class="mdr-comment-card ${isReply ? 'mdr-reply-card' : ''}" data-comment-id="${c.id}" data-line="${line}" style="border-left: 3px solid ${color}">
+        <div class="mdr-comment-meta">
+          <img src="${c.user.avatar_url}" class="mdr-comment-avatar" style="border-color:${color}" alt="">
+          <strong style="color:${color}">${c.user.login}</strong>
+          ${!isReply ? `<span class="mdr-comment-line">L${line}</span>` : ''}
+          <span class="mdr-comment-time">${timeAgo(c.created_at)}</span>
+        </div>
+        <div class="mdr-comment-body" id="mdr-cbody-${c.id}">${escapeHtml(c.body)}</div>
+        ${isOwner ? `<div class="mdr-comment-actions">
+          <button class="mdr-ca-btn mdr-ca-edit" data-id="${c.id}">Edit</button>
+          <button class="mdr-ca-btn mdr-ca-delete" data-id="${c.id}">Delete</button>
+        </div>` : ''}
+      </div>`;
+  }
+
+  function scrollToLine(line) {
+    const target = el.querySelector(`.mdr-markdown [data-line="${line}"]`);
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target.classList.add('mdr-flash');
+      setTimeout(() => target.classList.remove('mdr-flash'), 1500);
+    }
+  }
+
+  // Assign stable colors to users
+  const userColors = [
+    '#6366f1', '#ec4899', '#f59e0b', '#10b981', '#ef4444',
+    '#8b5cf6', '#06b6d4', '#f97316', '#14b8a6', '#e11d48'
+  ];
+  const userColorMap = new Map();
+
+  function getUserColor(login) {
+    if (userColorMap.has(login)) return userColorMap.get(login);
+    const color = userColors[userColorMap.size % userColors.length];
+    userColorMap.set(login, color);
+    return color;
+  }
+
+  function highlightCommentedLines(filePath) {
+    // Clear old highlights and badges
+    el.querySelectorAll('[data-has-comment]').forEach(e => e.removeAttribute('data-has-comment'));
+    el.querySelectorAll('.mdr-inline-badge').forEach(b => b.remove());
+
+    const fileComments = comments.filter(c => c.path === filePath);
+
+    // Group comments by line
+    const byLine = new Map();
+    fileComments.forEach(c => {
+      const line = getCommentLine(c);
+      const arr = byLine.get(line) || [];
+      arr.push(c);
+      byLine.set(line, arr);
+    });
+
+    byLine.forEach((lineComments, line) => {
+      const target = el.querySelector(`.mdr-markdown [data-line="${line}"]`);
+      if (!target) return;
+
+      target.setAttribute('data-has-comment', 'true');
+
+      // Remove existing badge if any
+      target.querySelector('.mdr-inline-badge')?.remove();
+
+      // Create inline badge showing comment count + user avatars
+      const badge = document.createElement('button');
+      badge.className = 'mdr-inline-badge';
+      badge.title = `${lineComments.length} comment${lineComments.length > 1 ? 's' : ''} — click to view`;
+
+      const uniqueUsers = [...new Map(lineComments.map(c => [c.user.login, c.user])).values()];
+      const avatars = uniqueUsers.slice(0, 3).map(u =>
+        `<img src="${u.avatar_url}" class="mdr-badge-avatar" alt="${u.login}" style="border-color:${getUserColor(u.login)}">`
+      ).join('');
+
+      badge.innerHTML = `${avatars}<span class="mdr-badge-count">${lineComments.length}</span>`;
+
+      badge.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Scroll sidebar to this line's comment group
+        const group = el.querySelector(`.mdr-line-group[data-group-line="${line}"]`);
+        if (group) {
+          group.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          group.classList.add('mdr-flash');
+          setTimeout(() => group.classList.remove('mdr-flash'), 1500);
+        }
+      });
+
+      target.appendChild(badge);
+    });
+  }
+
+  function openReplyForm(replyToId, line) {
+    // Remove any existing reply form
+    el.querySelectorAll('.mdr-reply-form').forEach(f => f.remove());
+
+    const btn = el.querySelector(`.mdr-ca-reply[data-reply-to="${replyToId}"]`);
+    if (!btn) return;
+
+    const form = document.createElement('div');
+    form.className = 'mdr-reply-form mdr-inline-form';
+    form.innerHTML = `
+      <textarea class="mdr-inline-textarea" placeholder="Write a reply..." autofocus></textarea>
+      <div class="mdr-inline-actions">
+        <button class="mdr-btn-cancel">Cancel</button>
+        <button class="mdr-btn-submit">Reply</button>
+      </div>`;
+
+    btn.after(form);
+    const ta = form.querySelector('textarea');
+    const sub = form.querySelector('.mdr-btn-submit');
+    setTimeout(() => ta.focus(), 50);
+
+    form.querySelector('.mdr-btn-cancel').addEventListener('click', (e) => { e.stopPropagation(); form.remove(); });
+    ta.addEventListener('keydown', e => {
+      e.stopPropagation();
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') sub.click();
+      if (e.key === 'Escape') form.remove();
+    });
+
+    sub.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const text = ta.value.trim();
+      if (!text) { ta.style.borderColor = '#ef4444'; return; }
+      sub.disabled = true; sub.textContent = 'Posting...';
+      try {
+        const newComment = await GitHubAPI.replyToComment(pr.owner, pr.repo, pr.pullNumber, replyToId, text);
+        comments.push(newComment);
+        form.remove();
+        renderCommentsSidebar(fileData.filePath);
+        toast('Reply posted');
+      } catch (err) {
+        sub.disabled = false; sub.textContent = 'Reply';
+        toast(err.message, 'error');
+      }
     });
   }
 

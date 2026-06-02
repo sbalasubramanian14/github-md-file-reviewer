@@ -90,5 +90,12 @@ window.GitHubAPI = (() => {
     }
   }
 
-  return { getToken, parsePRUrl, getRawFile, getPR, getPRFiles, getComments, postComment, editComment, deleteComment };
+  async function replyToComment(owner, repo, num, commentId, body) {
+    return request(`/repos/${owner}/${repo}/pulls/${num}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ body, in_reply_to: commentId })
+    });
+  }
+
+  return { getToken, parsePRUrl, getRawFile, getPR, getPRFiles, getComments, postComment, editComment, deleteComment, replyToComment };
 })();
