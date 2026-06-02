@@ -466,17 +466,9 @@ window.MDROverlay = (() => {
         );
 
       } else if (tag === 'PRE') {
-        // Code block: match against ``` fence
-        const codeText = node.textContent.trim().substring(0, 50).toLowerCase().replace(/\s+/g, ' ');
+        // Code block: match to the next unused ``` fence line
         matched = searchLines(
-          i => {
-            if (!lines[i].startsWith('```')) return false;
-            // Verify by checking code content
-            const content = [];
-            for (let j = i + 1; j < lines.length && !lines[j].startsWith('```'); j++) content.push(lines[j]);
-            const block = content.join(' ').trim().substring(0, 30).toLowerCase().replace(/\s+/g, ' ');
-            return !block || !codeText || codeText.startsWith(block.substring(0, 12)) || block.startsWith(codeText.substring(0, 12));
-          },
+          i => lines[i].trimStart().startsWith('```'),
           hint,
           null
         );
