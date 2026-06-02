@@ -46,6 +46,12 @@ window.GitHubAPI = (() => {
     return request(`/repos/${owner}/${repo}/pulls/${num}`);
   }
 
+  async function getCollaborators(owner, repo) {
+    try {
+      return await request(`/repos/${owner}/${repo}/collaborators?per_page=100`);
+    } catch { return []; }
+  }
+
   async function getPRFiles(owner, repo, num) {
     return request(`/repos/${owner}/${repo}/pulls/${num}/files?per_page=100`);
   }
@@ -131,5 +137,5 @@ window.GitHubAPI = (() => {
     });
   }
 
-  return { request, getToken, parsePRUrl, getRawFile, getPR, getPRFiles, getComments, getReviews, getReviewComments, postComment, editComment, deleteComment, replyToComment, createPendingReview, addReviewComment, submitReview, deletePendingReview };
+  return { request, getToken, parsePRUrl, getRawFile, getPR, getPRFiles, getCollaborators, getComments, getReviews, getReviewComments, postComment, editComment, deleteComment, replyToComment, createPendingReview, addReviewComment, submitReview, deletePendingReview };
 })();

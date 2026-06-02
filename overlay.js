@@ -8,6 +8,7 @@ window.MDROverlay = (() => {
   // Review mode state — comments collected locally, submitted in one batch
   let reviewMode = false;
   let pendingComments = []; // local: { path, position, line, body }
+  let mentionUsers = []; // { login, avatar_url }
 
   function toast(msg, type = 'success') {
     document.querySelectorAll('.mdr-toast').forEach(t => t.remove());
@@ -308,6 +309,9 @@ window.MDROverlay = (() => {
       select.addEventListener('change', () => loadFile(select.value));
 
       comments = await GitHubAPI.getComments(pr.owner, pr.repo, pr.pullNumber);
+
+      // Build mention users list from collaborators + commenters
+      buildMentionUsers();
 
       // Restore pending comments from storage
       const saved = await loadPendingFromStorage();
@@ -873,6 +877,7 @@ window.MDROverlay = (() => {
     btn.after(form);
     const ta = form.querySelector('textarea');
     const sub = form.querySelector('.mdr-btn-submit');
+    attachMentionAutocomplete(ta);
     setTimeout(() => ta.focus(), 50);
 
     form.querySelector('.mdr-btn-cancel').addEventListener('click', (e) => { e.stopPropagation(); form.remove(); });
@@ -1021,6 +1026,7 @@ window.MDROverlay = (() => {
     block.after(form);
     const ta = form.querySelector('textarea');
     const sub = form.querySelector('.mdr-btn-submit');
+    attachMentionAutocomplete(ta);
     setTimeout(() => ta.focus(), 50);
 
     form.querySelector('.mdr-btn-cancel').addEventListener('click', () => form.remove());
@@ -1069,6 +1075,145 @@ window.MDROverlay = (() => {
   function setContent(html) { if (el) el.querySelector('#mdr-content').innerHTML = html; }
 
   function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+  // --- @ mention autocomplete ---
+
+  async function buildMentionUsers() {
+    const seen = new Set();
+    mentionUsers = [];
+
+    function addUser(u) {
+      if (!u?.login || seen.has(u.login)) return;
+      seen.add(u.login);
+      mentionUsers.push({ login: u.login, avatar_url: u.avatar_url || '' });
+    }
+
+    // Add PR author
+    try {
+      const prData = await GitHubAPI.getPR(pr.owner, pr.repo, pr.pullNumber);
+      addUser(prData.user);
+      // Add requested reviewers
+      (prData.requested_reviewers || []).forEach(addUser);
+    } catch {}
+
+    // Add commenters
+    comments.forEach(c => addUser(c.user));
+
+    // Fetch collaborators in background
+    GitHubAPI.getCollaborators(pr.owner, pr.repo).then(collabs => {
+      collabs.forEach(addUser);
+    }).catch(() => {});
+  }
+
+  function attachMentionAutocomplete(textarea) {
+    let dropdown = null;
+    let mentionStart = -1;
+
+    textarea.addEventListener('input', () => {
+      const val = textarea.value;
+      const cursor = textarea.selectionStart;
+
+      // Find @ symbol before cursor
+      const beforeCursor = val.substring(0, cursor);
+      const atIdx = beforeCursor.lastIndexOf('@');
+
+      if (atIdx === -1 || (atIdx > 0 && /\S/.test(val[atIdx - 1]))) {
+        closeMentionDropdown();
+        return;
+      }
+
+      const query = beforeCursor.substring(atIdx + 1).toLowerCase();
+      if (query.includes(' ') || query.includes('\n')) {
+        closeMentionDropdown();
+        return;
+      }
+
+      mentionStart = atIdx;
+      const matches = mentionUsers.filter(u => u.login.toLowerCase().startsWith(query)).slice(0, 6);
+
+      if (matches.length === 0) {
+        closeMentionDropdown();
+        return;
+      }
+
+      showMentionDropdown(textarea, matches, query);
+    });
+
+    textarea.addEventListener('keydown', (e) => {
+      if (!dropdown) return;
+      const items = dropdown.querySelectorAll('.mdr-mention-item');
+      const active = dropdown.querySelector('.mdr-mention-active');
+      let idx = [...items].indexOf(active);
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        idx = (idx + 1) % items.length;
+        items.forEach(i => i.classList.remove('mdr-mention-active'));
+        items[idx].classList.add('mdr-mention-active');
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        idx = (idx - 1 + items.length) % items.length;
+        items.forEach(i => i.classList.remove('mdr-mention-active'));
+        items[idx].classList.add('mdr-mention-active');
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        if (active) {
+          e.preventDefault();
+          insertMention(textarea, active.getAttribute('data-login'));
+        }
+      } else if (e.key === 'Escape') {
+        closeMentionDropdown();
+      }
+    });
+
+    textarea.addEventListener('blur', () => {
+      setTimeout(closeMentionDropdown, 200);
+    });
+
+    function showMentionDropdown(ta, matches) {
+      closeMentionDropdown();
+      dropdown = document.createElement('div');
+      dropdown.className = 'mdr-mention-dropdown';
+
+      dropdown.innerHTML = matches.map((u, i) =>
+        `<div class="mdr-mention-item ${i === 0 ? 'mdr-mention-active' : ''}" data-login="${u.login}">
+          <img src="${u.avatar_url}" class="mdr-mention-avatar" alt="">
+          <span>${u.login}</span>
+        </div>`
+      ).join('');
+
+      // Position below textarea cursor
+      const rect = ta.getBoundingClientRect();
+      dropdown.style.position = 'fixed';
+      dropdown.style.left = rect.left + 'px';
+      dropdown.style.top = (rect.bottom + 2) + 'px';
+      dropdown.style.minWidth = '180px';
+
+      dropdown.querySelectorAll('.mdr-mention-item').forEach(item => {
+        item.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          insertMention(ta, item.getAttribute('data-login'));
+        });
+      });
+
+      document.body.appendChild(dropdown);
+    }
+
+    function insertMention(ta, login) {
+      const val = ta.value;
+      const before = val.substring(0, mentionStart);
+      const after = val.substring(ta.selectionStart);
+      ta.value = before + '@' + login + ' ' + after;
+      const newCursor = mentionStart + login.length + 2;
+      ta.setSelectionRange(newCursor, newCursor);
+      ta.focus();
+      closeMentionDropdown();
+    }
+
+    function closeMentionDropdown() {
+      if (dropdown) { dropdown.remove(); dropdown = null; }
+      mentionStart = -1;
+    }
+  }
 
   function timeAgo(dateStr) {
     const s = Math.floor((Date.now() - new Date(dateStr)) / 1000);
