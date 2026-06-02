@@ -460,15 +460,17 @@ window.MDROverlay = (() => {
 
   async function renderCommentsSidebar(filePath) {
     const fileComments = comments.filter(c => c.path === filePath);
+    const filePending = pendingComments.filter(c => c.path === filePath);
     const list = el.querySelector('#mdr-sidebar-list');
     const currentUser = await getCurrentUser();
 
-    el.querySelector('.mdr-sidebar-header').textContent = `Comments (${fileComments.length})`;
+    const totalCount = fileComments.length + filePending.length;
+    el.querySelector('.mdr-sidebar-header').textContent =
+      `Comments (${fileComments.length})${filePending.length ? ` + ${filePending.length} pending` : ''}`;
 
-    // Highlight commented lines in content
     highlightCommentedLines(filePath);
 
-    if (fileComments.length === 0) {
+    if (totalCount === 0) {
       list.innerHTML = '<span class="mdr-sidebar-empty">No comments on this file</span>';
       return;
     }
@@ -493,6 +495,40 @@ window.MDROverlay = (() => {
     const sortedLines = [...lineGroups.keys()].sort((a, b) => a - b);
 
     let html = '';
+
+    // Render pending (draft) comments first
+    if (filePending.length > 0) {
+      const pendingByLine = new Map();
+      filePending.forEach((c, idx) => {
+        const arr = pendingByLine.get(c.line) || [];
+        arr.push({ ...c, _idx: idx });
+        pendingByLine.set(c.line, arr);
+      });
+      const pendingLines = [...pendingByLine.keys()].sort((a, b) => a - b);
+
+      html += `<div class="mdr-pending-section">`;
+      html += `<div class="mdr-pending-section-header">Pending (${filePending.length})</div>`;
+      for (const line of pendingLines) {
+        html += `<div class="mdr-line-group" data-group-line="${line}">`;
+        html += `<div class="mdr-line-group-header" data-line="${line}">Line ${line}</div>`;
+        for (const c of pendingByLine.get(line)) {
+          html += `
+            <div class="mdr-comment-card mdr-pending-card" data-pending-idx="${c._idx}" data-line="${c.line}">
+              <div class="mdr-comment-meta">
+                <span class="mdr-pending-badge">Draft</span>
+                <span class="mdr-comment-line">L${c.line}</span>
+              </div>
+              <div class="mdr-comment-body">${escapeHtml(c.body)}</div>
+              <div class="mdr-comment-actions">
+                <button class="mdr-ca-btn mdr-ca-delete mdr-pending-remove" data-pending-idx="${c._idx}">Remove</button>
+              </div>
+            </div>`;
+        }
+        html += `</div>`;
+      }
+      html += `</div>`;
+    }
+
     for (const line of sortedLines) {
       const group = lineGroups.get(line);
       group.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
@@ -582,6 +618,39 @@ window.MDROverlay = (() => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         openReplyForm(parseInt(btn.getAttribute('data-reply-to')), parseInt(btn.getAttribute('data-line')));
+      });
+    });
+
+    // Pending comment remove buttons
+    list.querySelectorAll('.mdr-pending-remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.getAttribute('data-pending-idx'));
+        pendingComments.splice(idx, 1);
+        updatePendingCount();
+        renderCommentsSidebar(filePath);
+        // Remove corresponding pending badge from content
+        const badges = el.querySelectorAll('.mdr-pending-badge');
+        // Re-render badges by removing all and re-adding for remaining
+        el.querySelectorAll('.mdr-markdown .mdr-pending-badge').forEach(b => b.remove());
+        pendingComments.filter(c => c.path === filePath).forEach(c => {
+          const target = el.querySelector(`.mdr-markdown [data-line="${c.line}"]`);
+          if (target && !target.querySelector('.mdr-pending-badge')) {
+            const badge = document.createElement('span');
+            badge.className = 'mdr-pending-badge';
+            badge.textContent = 'Pending';
+            target.appendChild(badge);
+          }
+        });
+        toast('Pending comment removed');
+      });
+    });
+
+    // Pending cards click to scroll
+    list.querySelectorAll('.mdr-pending-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.mdr-ca-btn')) return;
+        scrollToLine(card.getAttribute('data-line'));
       });
     });
   }
@@ -862,11 +931,14 @@ window.MDROverlay = (() => {
         form.remove();
 
         // Show a small pending badge on the block
-        const badge = document.createElement('span');
-        badge.className = 'mdr-pending-badge';
-        badge.textContent = 'Pending';
-        block.appendChild(badge);
+        if (!block.querySelector('.mdr-pending-badge')) {
+          const badge = document.createElement('span');
+          badge.className = 'mdr-pending-badge';
+          badge.textContent = 'Pending';
+          block.appendChild(badge);
+        }
 
+        renderCommentsSidebar(fileData.filePath);
         toast(`Comment added to review (${pendingComments.length} pending)`, 'info');
         return;
       }

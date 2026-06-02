@@ -105,6 +105,20 @@
 .mdr-sd-reqchanges { background: #dc2626; color: white; }
 .mdr-sd-reqchanges:hover { background: #b91c1c; }
 
+/* Pending section in sidebar */
+.mdr-pending-section {
+  margin-bottom: 10px; padding-bottom: 8px; border-bottom: 2px dashed var(--border);
+}
+.mdr-pending-section-header {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  color: #92400e; padding: 4px 6px; background: #fef3c7; border-radius: 4px; margin-bottom: 6px;
+}
+[data-theme="dark"] .mdr-pending-section-header { color: #fde68a; background: #422006; }
+.mdr-pending-card {
+  border-left: 3px solid #fbbf24 !important; background: rgba(251, 191, 36, 0.06);
+}
+[data-theme="dark"] .mdr-pending-card { background: rgba(251, 191, 36, 0.08); }
+
 /* Pending badge on content blocks */
 .mdr-pending-badge {
   display: inline-block; padding: 1px 6px; border-radius: 4px;
