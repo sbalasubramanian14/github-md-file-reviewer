@@ -627,7 +627,7 @@ window.MDROverlay = (() => {
                 <span class="mdr-pending-badge">Draft</span>
                 <span class="mdr-comment-line">L${c.line}</span>
               </div>
-              <div class="mdr-comment-body">${escapeHtml(c.body)}</div>
+              <div class="mdr-comment-body mdr-comment-md">${marked.parse(c.body || '', { gfm: true, breaks: true })}</div>
               <div class="mdr-comment-actions">
                 <button class="mdr-ca-btn mdr-ca-delete mdr-pending-remove" data-pending-idx="${c._idx}">Remove</button>
               </div>
@@ -775,7 +775,7 @@ window.MDROverlay = (() => {
           ${!isReply ? `<span class="mdr-comment-line">L${line}</span>` : ''}
           <span class="mdr-comment-time">${timeAgo(c.created_at)}</span>
         </div>
-        <div class="mdr-comment-body" id="mdr-cbody-${c.id}">${escapeHtml(c.body)}</div>
+        <div class="mdr-comment-body mdr-comment-md" id="mdr-cbody-${c.id}">${marked.parse(c.body || '', { gfm: true, breaks: true })}</div>
         ${isOwner ? `<div class="mdr-comment-actions">
           <button class="mdr-ca-btn mdr-ca-edit" data-id="${c.id}">Edit</button>
           <button class="mdr-ca-btn mdr-ca-delete" data-id="${c.id}">Delete</button>
