@@ -32,6 +32,7 @@ window.MDROverlay = (() => {
 
     el.querySelector('#mdr-close').addEventListener('click', close);
     el.querySelector('#mdr-theme-toggle').addEventListener('click', toggleTheme);
+    el.querySelector('#mdr-download').addEventListener('click', downloadFile);
     setupReviewMode();
     document.addEventListener('keydown', onEsc);
 
@@ -50,6 +51,19 @@ window.MDROverlay = (() => {
     return new Promise(r => chrome.storage.local.get(['mdr_theme'], d => {
       r(d.mdr_theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
     }));
+  }
+
+  function downloadFile() {
+    if (!fileData?.raw) { toast('No file loaded', 'error'); return; }
+    const filename = fileData.filePath.split('/').pop();
+    const blob = new Blob([fileData.raw], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast(`Downloaded ${filename}`);
   }
 
   function toggleTheme() {
@@ -75,6 +89,7 @@ window.MDROverlay = (() => {
             <button class="mdr-mode-btn" data-mode="review">Start Review</button>
           </div>
           <select class="mdr-file-select" id="mdr-file-select" disabled><option>Loading...</option></select>
+          <button class="mdr-download-btn" id="mdr-download" title="Download .md file">\u2B73</button>
           <button class="mdr-theme-btn" id="mdr-theme-toggle" title="Toggle dark/light mode"><span class="mdr-theme-sun">\u2600\uFE0E</span><span class="mdr-theme-knob"></span><span class="mdr-theme-moon">\u263D\uFE0E</span></button>
           <button class="mdr-close-btn" id="mdr-close" title="Close (Esc)">&times;</button>
         </div>
