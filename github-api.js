@@ -1,4 +1,3 @@
-if (typeof window.GitHubAPI !== 'undefined') { /* already loaded */ } else
 window.GitHubAPI = (() => {
   const API = 'https://api.github.com';
 
