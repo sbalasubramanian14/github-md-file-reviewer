@@ -107,7 +107,7 @@ window.GitHubAPI = (() => {
   async function createPendingReview(owner, repo, num, commitId) {
     return request(`/repos/${owner}/${repo}/pulls/${num}/reviews`, {
       method: 'POST',
-      body: JSON.stringify({ commit_id: commitId, event: 'PENDING' })
+      body: JSON.stringify({ commit_id: commitId })
     });
   }
 
