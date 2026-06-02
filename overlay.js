@@ -219,44 +219,71 @@ window.MDROverlay = (() => {
     return false;
   }
 
+  function stripMarkdown(text) {
+    return text
+      .replace(/^#{1,6}\s+/, '')       // heading prefix
+      .replace(/^[\s>*+\-\d.]+/, '')   // list/blockquote prefix (leading only)
+      .replace(/\*\*(.+?)\*\*/g, '$1') // bold
+      .replace(/\*(.+?)\*/g, '$1')     // italic
+      .replace(/__(.+?)__/g, '$1')     // bold
+      .replace(/_(.+?)_/g, '$1')       // italic
+      .replace(/`([^`]+)`/g, '$1')     // inline code
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
+      .replace(/[()]/g, '')            // parens
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
   function assignMissedLines(container, raw) {
     const lines = raw.split('\n');
     const usedLines = new Set();
     container.querySelectorAll('[data-line]').forEach(e => usedLines.add(parseInt(e.getAttribute('data-line'))));
 
-    function findLine(text, selectors) {
-      container.querySelectorAll(selectors).forEach(node => {
-        if (node.getAttribute('data-line')) return;
-        const clean = (text || node.textContent).trim().substring(0, 50).toLowerCase().replace(/\s+/g, ' ');
-        if (!clean) return;
-        for (let i = 0; i < lines.length; i++) {
-          if (usedLines.has(i + 1)) continue;
-          const lineLower = lines[i].replace(/^[#>*\-+\d.|\s`_\[\]()]+/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
-          if (lineLower.length > 3 && clean.startsWith(lineLower.substring(0, 25))) {
-            node.setAttribute('data-line', i + 1);
-            node.style.position = 'relative';
-            usedLines.add(i + 1);
-            break;
-          }
+    // Pre-process raw lines: strip markdown for comparison
+    const cleanLines = lines.map(l => stripMarkdown(l));
+
+    function matchNode(node) {
+      if (node.getAttribute('data-line')) return;
+      const domText = node.textContent.trim().substring(0, 60).toLowerCase().replace(/[()]/g, '').replace(/\s+/g, ' ');
+      if (!domText || domText.length < 3) return;
+
+      for (let i = 0; i < cleanLines.length; i++) {
+        if (usedLines.has(i + 1)) continue;
+        const cl = cleanLines[i];
+        if (cl.length < 3) continue;
+
+        // Try multiple matching strategies
+        const matchLen = Math.min(25, cl.length, domText.length);
+        if (matchLen < 3) continue;
+
+        const clSub = cl.substring(0, matchLen);
+        const domSub = domText.substring(0, matchLen);
+
+        if (domSub === clSub || domText.includes(clSub) || cl.includes(domSub)) {
+          node.setAttribute('data-line', i + 1);
+          node.style.position = 'relative';
+          usedLines.add(i + 1);
+          return;
         }
-      });
+      }
     }
 
-    findLine(null, 'li:not([data-line])');
-    findLine(null, 'h1:not([data-line]),h2:not([data-line]),h3:not([data-line]),h4:not([data-line]),h5:not([data-line]),h6:not([data-line])');
-    findLine(null, 'p:not([data-line])');
+    // Match all unassigned block elements
+    container.querySelectorAll('li:not([data-line])').forEach(matchNode);
+    container.querySelectorAll('h1:not([data-line]),h2:not([data-line]),h3:not([data-line]),h4:not([data-line]),h5:not([data-line]),h6:not([data-line])').forEach(matchNode);
+    container.querySelectorAll('p:not([data-line])').forEach(matchNode);
+    container.querySelectorAll('pre:not([data-line])').forEach(matchNode);
 
-    // Table rows: match by pipe-separated cell content
-    container.querySelectorAll('tr').forEach(tr => {
-      if (tr.getAttribute('data-line')) return;
+    // Table rows: match by first cell content against pipe-delimited lines
+    container.querySelectorAll('tr:not([data-line])').forEach(tr => {
       const cells = [...tr.querySelectorAll('td, th')].map(c => c.textContent.trim().toLowerCase()).filter(Boolean);
       if (cells.length === 0) return;
       const needle = cells[0].substring(0, 20);
       for (let i = 0; i < lines.length; i++) {
         if (usedLines.has(i + 1)) continue;
         if (!lines[i].includes('|')) continue;
-        const lineLower = lines[i].toLowerCase();
-        if (lineLower.includes(needle)) {
+        if (lines[i].toLowerCase().includes(needle)) {
           tr.setAttribute('data-line', i + 1);
           tr.style.position = 'relative';
           usedLines.add(i + 1);

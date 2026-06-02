@@ -209,6 +209,14 @@
 .mdr-badge-avatar:first-child { margin-left: 0; }
 .mdr-badge-count { margin-left: 2px; }
 
+/* Code blocks: comment button on top-right since left is inside dark bg */
+.mdr-markdown pre[data-line] .mdr-comment-btn {
+  left: auto; right: -34px; top: 8px;
+}
+.mdr-markdown pre[data-has-comment="true"] {
+  border-left: 2px solid var(--accent);
+}
+
 /* Table rows are commentable */
 .mdr-markdown tr[data-line] { cursor: pointer; }
 .mdr-markdown tr[data-line]:hover { background: var(--bg-hover) !important; }
