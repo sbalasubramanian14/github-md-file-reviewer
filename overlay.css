@@ -327,14 +327,36 @@
 .mdr-badge-avatar:first-child { margin-left: 0; }
 .mdr-badge-count { margin-left: 2px; }
 
-/* Code blocks: button inside top-right corner (overflow clips outside buttons) */
-.mdr-markdown pre[data-line] .mdr-comment-btn {
-  left: auto; right: 8px; top: 8px;
-  background: rgba(99, 102, 241, 0.9);
-  backdrop-filter: blur(4px);
+/* Code block line-by-line commenting */
+.mdr-markdown pre {
+  padding: 0 !important; overflow-x: auto;
 }
-.mdr-markdown pre[data-has-comment="true"] {
+.mdr-code-line {
+  display: flex; align-items: flex-start;
+  padding: 1px 12px 1px 0; min-height: 20px;
+  transition: background 0.1s; border-radius: 0;
+}
+.mdr-code-line:hover { background: rgba(255,255,255,0.06); }
+.mdr-code-line .mdr-comment-btn {
+  left: auto; right: 4px; top: 1px;
+  width: 20px; height: 20px; border-radius: 4px;
+  background: rgba(99, 102, 241, 0.85);
+}
+.mdr-code-linenum {
+  display: inline-block; width: 42px; min-width: 42px;
+  text-align: right; padding-right: 12px; padding-left: 8px;
+  color: rgba(255,255,255,0.25); font-size: 12px;
+  user-select: none; flex-shrink: 0;
+}
+.mdr-code-text {
+  flex: 1; white-space: pre;
+}
+.mdr-code-line[data-has-comment="true"] {
+  background: rgba(99, 102, 241, 0.12);
   border-left: 2px solid var(--accent);
+}
+.mdr-code-line[data-has-comment="true"] .mdr-code-linenum {
+  color: var(--accent);
 }
 
 /* Table rows are commentable */

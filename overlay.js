@@ -370,12 +370,32 @@ window.MDROverlay = (() => {
     const container = document.createElement('div');
     container.innerHTML = html;
 
-    // Assign data-line to ALL block elements using direct text search
-    // against raw markdown lines. This is more reliable than sequential
-    // token matching which drifts when tokens don't align 1:1 with DOM.
     assignAllLines(container, raw);
+    splitCodeBlockLines(container);
 
     return container.innerHTML;
+  }
+
+  function splitCodeBlockLines(container) {
+    container.querySelectorAll('pre[data-line]').forEach(pre => {
+      const fenceLine = parseInt(pre.getAttribute('data-line'));
+      const codeEl = pre.querySelector('code');
+      const text = codeEl ? codeEl.textContent : pre.textContent;
+      const codeLines = text.replace(/\n$/, '').split('\n');
+
+      // Build line-by-line HTML inside the pre
+      // Each line is a div with its own data-line (fence line + 1 + index)
+      const linesHtml = codeLines.map((line, i) => {
+        const lineNum = fenceLine + 1 + i; // +1 to skip the ``` fence itself
+        const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return `<div class="mdr-code-line" data-line="${lineNum}" style="position:relative"><span class="mdr-code-linenum">${lineNum}</span><span class="mdr-code-text">${escaped || ' '}</span></div>`;
+      }).join('');
+
+      pre.innerHTML = linesHtml;
+      pre.removeAttribute('data-line'); // remove block-level data-line; individual lines have it
+      pre.style.position = '';
+      pre.style.padding = '0';
+    });
   }
 
   function stripMarkdown(text) {
