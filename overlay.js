@@ -404,6 +404,17 @@ window.MDROverlay = (() => {
       return l.replace(/\*\*(.+?)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1').replace(/\\/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
     });
 
+    // Pre-compute opening fence line numbers (skip closing fences)
+    const openingFences = [];
+    let inCode = false;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trimStart().startsWith('```')) {
+        if (!inCode) openingFences.push(i);
+        inCode = !inCode;
+      }
+    }
+    let nextFenceIdx = 0;
+
     // Collect ALL commentable elements in document order
     const allElements = [];
     container.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,tr').forEach(node => allElements.push(node));
@@ -466,12 +477,14 @@ window.MDROverlay = (() => {
         );
 
       } else if (tag === 'PRE') {
-        // Code block: match to the next unused ``` fence line
-        matched = searchLines(
-          i => lines[i].trimStart().startsWith('```'),
-          hint,
-          null
-        );
+        // Code block: match to the next opening ``` fence
+        if (nextFenceIdx < openingFences.length) {
+          const fenceLine = openingFences[nextFenceIdx];
+          if (!usedLines.has(fenceLine + 1)) {
+            matched = fenceLine;
+            nextFenceIdx++;
+          }
+        }
 
       } else {
         // Heading, paragraph, list item, blockquote
