@@ -228,11 +228,23 @@ window.MDROverlay = (() => {
         // Skip separator rows (----, :---:, etc.)
         if (cells.every(c => /^[-:\s]+$/.test(c))) continue;
 
-        const needle = cells[0].substring(0, 25);
-        if (needle.length < 2) continue;
+        // Use multiple cells for matching — single-char cells like "1" are ambiguous
+        // Find the longest/most-specific cell to use as primary needle
+        const needles = cells
+          .map(c => c.substring(0, 25))
+          .filter(c => c.length >= 2)
+          .sort((a, b) => b.length - a.length);
+
+        if (needles.length === 0) continue;
 
         matched = searchLines(
-          i => cleanPipeLines[i].includes(needle),
+          i => {
+            const pl = cleanPipeLines[i];
+            // Must match the longest needle, plus at least one more if available
+            if (!pl.includes(needles[0])) return false;
+            if (needles.length > 1 && !pl.includes(needles[1])) return false;
+            return true;
+          },
           hint,
           i => lines[i].includes('|')
         );
