@@ -1,5 +1,5 @@
 (() => {
-  const VERSION = 5;
+  const VERSION = 8;
   if (window.__MDR_VERSION__ === VERSION) {
     if (window.__MDR_REINIT__) window.__MDR_REINIT__();
     return;
@@ -20,7 +20,8 @@
         GitHubAPI.getPR(parsed.owner, parsed.repo, parsed.pullNumber),
         GitHubAPI.getPRFiles(parsed.owner, parsed.repo, parsed.pullNumber)
       ]);
-      const mdFiles = files.filter(f => f.filename.endsWith('.md'));
+      // Deleted files can't be viewed at head or commented on the RIGHT side
+      const mdFiles = files.filter(f => /\.(md|markdown|mdx)$/i.test(f.filename) && f.status !== 'removed');
       if (mdFiles.length === 0) return;
 
       prData = { ...parsed, headSha: pr.head.sha, headRef: pr.head.ref, files: mdFiles };

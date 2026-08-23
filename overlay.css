@@ -45,12 +45,53 @@
 .mdr-topbar-pr { font-size: 11px; opacity: 0.7; background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 5px; }
 .mdr-topbar-right { display: flex; align-items: center; gap: 6px; }
 
-.mdr-file-select {
-  padding: 4px 8px; border-radius: 5px;
+.mdr-topbar-file {
+  padding: 4px 10px; border-radius: 5px;
   border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.08);
-  color: #e0e7ff; font-size: 12px; cursor: pointer; outline: none; max-width: 260px;
+  color: #e0e7ff; font-size: 12px; max-width: 260px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.mdr-file-select option { color: #1f2937; background: white; }
+
+/* File tree pane */
+.mdr-filetree {
+  width: 240px; min-width: 240px; display: flex; flex-direction: column;
+  background: var(--sidebar-bg); border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+.mdr-filetree-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  font-size: 12px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.mdr-filetree-count { font-weight: 400; }
+.mdr-filetree-collapse, .mdr-filetree-rail {
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: var(--text-muted);
+  cursor: pointer; border-radius: 5px; padding: 4px;
+}
+.mdr-filetree-collapse:hover, .mdr-filetree-rail:hover { background: var(--bg-hover); color: var(--accent); }
+.mdr-filetree-rail {
+  width: 36px; min-width: 36px; align-self: stretch; height: auto;
+  border-right: 1px solid var(--border); border-radius: 0;
+  background: var(--sidebar-bg); align-items: flex-start; padding-top: 14px;
+}
+.mdr-filetree-list { flex: 1; overflow-y: auto; padding: 6px 0; }
+.mdr-tree-ul { list-style: none; margin: 0; padding: 0; }
+.mdr-tree-row {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  border: none; background: transparent; cursor: pointer;
+  padding: 5px 10px; font-size: 12.5px; color: var(--text);
+  text-align: left; border-radius: 0;
+}
+.mdr-tree-row:hover { background: var(--bg-hover); }
+.mdr-tree-dir { color: var(--text-secondary); font-weight: 600; }
+.mdr-tree-arrow { font-size: 8px; width: 10px; flex: none; }
+.mdr-tree-ico { flex: none; opacity: 0.7; }
+.mdr-tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mdr-tree-adds { margin-left: auto; font-size: 10.5px; color: #10b981; font-weight: 600; flex: none; }
+.mdr-tree-file.active { background: var(--bg-hover); box-shadow: inset 3px 0 0 var(--accent); }
+.mdr-tree-file.active .mdr-tree-name { color: var(--accent); font-weight: 600; }
 
 /* Download button */
 .mdr-download-btn {
@@ -106,6 +147,14 @@
 }
 .mdr-mode-btn:hover { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.8); }
 .mdr-mode-btn.active { background: #6366f1; color: white; }
+/* Same toggle inside the (light) edit bar needs dark text */
+.mdr-editview-toggle { border-color: rgba(0,0,0,0.15); }
+.mdr-editview-toggle .mdr-mode-btn { background: rgba(0,0,0,0.05); color: rgba(0,0,0,0.55); }
+.mdr-editview-toggle .mdr-mode-btn:hover { background: rgba(0,0,0,0.12); color: rgba(0,0,0,0.8); }
+.mdr-editview-toggle .mdr-mode-btn.active { background: #6366f1; color: white; }
+[data-theme="dark"] .mdr-editview-toggle { border-color: rgba(255,255,255,0.2); }
+[data-theme="dark"] .mdr-editview-toggle .mdr-mode-btn { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.55); }
+[data-theme="dark"] .mdr-editview-toggle .mdr-mode-btn.active { background: #6366f1; color: white; }
 
 /* Review bar */
 .mdr-review-bar {
@@ -129,8 +178,8 @@
 
 /* Submit dialog */
 .mdr-submit-dialog {
-  position: absolute; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px);
-  display: flex; align-items: center; justify-content: center; z-index: 10;
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center; z-index: 100000;
 }
 .mdr-submit-dialog-inner {
   background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
@@ -408,6 +457,77 @@
 }
 [data-line]:hover > .mdr-comment-btn { opacity: 1; }
 .mdr-comment-btn:hover { transform: scale(1.15); background: var(--accent-hover); }
+.mdr-comment-btn-disabled { background: var(--text-muted, #8b949e); cursor: not-allowed; }
+.mdr-comment-btn-disabled:hover { transform: none; background: var(--text-muted, #8b949e); }
+
+/* Diff-aware view */
+.mdr-diff-toggle {
+  margin-left: auto; border: 1px solid var(--border); background: var(--bg-secondary);
+  color: var(--text-secondary); font-size: 11px; font-weight: 600;
+  padding: 3px 10px; border-radius: 12px; cursor: pointer;
+}
+.mdr-diff-toggle:hover { background: var(--bg-hover); color: var(--text); }
+.mdr-diff-toggle-active { border-color: var(--accent); color: var(--accent); }
+.mdr-diff-hide { display: none !important; }
+/* Changed blocks get a subtle green marker rail in diff view */
+.mdr-diff-only [data-changed] { position: relative; }
+.mdr-diff-only [data-changed]::before {
+  content: ''; position: absolute; left: -14px; top: 0; bottom: 0;
+  width: 3px; border-radius: 2px; background: #10b981; opacity: 0.6;
+}
+.mdr-diff-only [data-context]:not([data-changed]) { opacity: 0.55; }
+
+/* Resolve threads */
+.mdr-thread { margin-bottom: 4px; }
+.mdr-thread-actions { display: flex; gap: 6px; align-items: center; }
+.mdr-ca-resolve { margin-left: auto; }
+.mdr-thread-resolved-bar {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  padding: 6px 10px; border-radius: 6px; font-size: 12px;
+  color: var(--text-secondary); background: var(--bg-hover);
+  border: 1px solid var(--border);
+}
+.mdr-thread-resolved-bar svg { color: #10b981; flex: none; }
+.mdr-thread-resolved-bar .mdr-thread-show { margin-left: auto; color: var(--accent); font-weight: 600; }
+.mdr-thread-resolved .mdr-thread-inner { opacity: 0.75; }
+
+/* Edit mode */
+.mdr-content-editing { padding: 0 !important; display: flex; }
+.mdr-editor { display: flex; flex: 1; min-height: 0; width: 100%; }
+.mdr-editor-raw { display: flex; flex: 1; min-width: 0; }
+.mdr-editor-rich { flex: 1; min-width: 0; overflow: hidden; }
+.mdr-editor-rich .toastui-editor-defaultUI { border: none; border-radius: 0; }
+.mdr-editor-textarea {
+  flex: 1; min-width: 0; border: none; outline: none; resize: none;
+  padding: 24px; border-right: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px; line-height: 1.7;
+  background: var(--code-bg); color: var(--code-text);
+}
+.mdr-editor-preview { flex: 1; min-width: 0; overflow-y: auto; padding: 24px 40px; }
+.mdr-submit-dialog-note { font-size: 12px; color: var(--text-muted); margin: 8px 0; }
+.mdr-editview-toggle { margin-right: 8px; }
+
+/* Mermaid diagrams */
+.mdr-mermaid-block {
+  margin: 16px 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+}
+.mdr-mermaid-toolbar {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 12px; background: var(--bg-secondary); border-bottom: 1px solid var(--border);
+  font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;
+}
+.mdr-mermaid-toggle {
+  border: none; background: transparent; color: var(--accent); cursor: pointer;
+  font-size: 11px; padding: 2px 6px; border-radius: 4px;
+}
+.mdr-mermaid-toggle:hover { background: var(--bg-hover); }
+.mdr-mermaid-diagram {
+  display: flex; justify-content: center; padding: 16px;
+  background: var(--bg); overflow-x: auto;
+}
+.mdr-mermaid-diagram svg { max-width: 100%; height: auto; }
+.mdr-mermaid-error { color: #ef4444; font-size: 12px; padding: 8px 12px; font-family: monospace; }
 
 /* Flash animation when scrolling to a comment's line */
 .mdr-flash { animation: mdr-flash-anim 1.5s ease-out; }

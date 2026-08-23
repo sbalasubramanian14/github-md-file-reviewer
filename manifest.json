@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GitHub MD Reviewer",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Review rendered Markdown in GitHub PRs with Google Docs-style inline comments",
   "permissions": [
     "storage",
@@ -29,8 +29,8 @@
   "content_scripts": [
     {
       "matches": ["https://github.com/*/pull/*"],
-      "js": ["lib/marked.min.js", "github-api.js", "overlay.js", "content.js"],
-      "css": ["overlay.css"],
+      "js": ["lib/marked.min.js", "lib/purify.min.js", "lib/mermaid.min.js", "lib/toastui-editor-all.min.js", "github-api.js", "overlay.js", "content.js"],
+      "css": ["lib/toastui-editor.min.css", "lib/toastui-editor-dark.min.css", "overlay.css"],
       "run_at": "document_idle"
     }
   ],

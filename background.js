@@ -2,11 +2,11 @@ chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
   if (details.url.match(/github\.com\/[^/]+\/[^/]+\/pull\/\d+/)) {
     chrome.scripting.executeScript({
       target: { tabId: details.tabId },
-      files: ['lib/marked.min.js', 'github-api.js', 'overlay.js', 'content.js']
+      files: ['lib/marked.min.js', 'lib/purify.min.js', 'lib/mermaid.min.js', 'lib/toastui-editor-all.min.js', 'github-api.js', 'overlay.js', 'content.js']
     }).catch(() => {});
     chrome.scripting.insertCSS({
       target: { tabId: details.tabId },
-      files: ['overlay.css']
+      files: ['lib/toastui-editor.min.css', 'lib/toastui-editor-dark.min.css', 'overlay.css']
     }).catch(() => {});
   }
 }, { url: [{ hostEquals: 'github.com' }] });

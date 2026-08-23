@@ -1,8 +1,21 @@
-div structure examplt.html
+# Editor / OS
 .claude/
 .DS_Store
+Thumbs.db
+
+# Packaged builds and signing keys — never commit a .pem, it is the
+# private key that owns the extension ID for self-hosted CRX builds
 *.zip
+*.crx
+*.pem
+
+# Local scratch: drafts, sample markdown, notes, DOM dumps.
+# Put anything throwaway in local/ instead of the repo root.
+local/
+scratch/
+*.local.md
+*.local.html
 *.md.bak
-hris-service-current-state.md
-Employee_Field_Rules_Concept_Note*.md
-tech-spec-*.md
+
+# Store-publishing runbook — contains account-specific details
+PUBLISHING.md

@@ -4,17 +4,82 @@ window.MDROverlay = (() => {
   let fileData = null;
   let el = null;
   let comments = [];
+  let threadMap = {}; // REST comment id -> { threadId, isResolved }
+  let diffView = false; // diff-aware view: show only changed blocks (+ headings for context)
 
   // Review mode state — comments collected locally, submitted in one batch
   let reviewMode = false;
   let pendingComments = []; // local: { path, position, line, body }
   let mentionUsers = []; // { login, avatar_url }
 
+  function nextDraftId() {
+    return `d_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  // All markdown (file content + comment bodies) passes through DOMPurify —
+  // marked does not sanitize, and comment bodies come from other users.
+  function sanitizeHtml(html) {
+    return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+  }
+
+  function renderMdBody(text) {
+    return sanitizeHtml(marked.parse(text || '', { gfm: true, breaks: true }));
+  }
+
+  // Parse a unified diff patch into the set of RIGHT-side line numbers GitHub
+  // accepts review comments on (added + context lines inside hunks).
+  // Returns null when the patch is unavailable (huge diffs) — treated as "unknown, allow all".
+  function parseCommentableLines(patch) {
+    if (!patch) return null;
+    const set = new Set();
+    let newLine = 0;
+    for (const l of patch.split('\n')) {
+      if (l.startsWith('@@')) {
+        const m = l.match(/\+(\d+)(?:,(\d+))?/);
+        if (m) newLine = parseInt(m[1]);
+        continue;
+      }
+      if (l.startsWith('-') || l.startsWith('\\')) continue;
+      set.add(newLine);
+      newLine++;
+    }
+    return set;
+  }
+
+  function isLineCommentable(line) {
+    if (!fileData || !fileData.commentable) return true;
+    return fileData.commentable.has(line);
+  }
+
+  // Set of RIGHT-side line numbers that were actually added (the '+' lines),
+  // used to highlight/isolate the real changes in diff-aware view.
+  function parseAddedLines(patch) {
+    if (!patch) return null;
+    const set = new Set();
+    let newLine = 0;
+    for (const l of patch.split('\n')) {
+      if (l.startsWith('@@')) {
+        const m = l.match(/\+(\d+)(?:,(\d+))?/);
+        if (m) newLine = parseInt(m[1]);
+        continue;
+      }
+      if (l.startsWith('\\')) continue;
+      if (l.startsWith('-')) continue;      // removed line — not on the RIGHT side
+      if (l.startsWith('+')) { set.add(newLine); newLine++; continue; }
+      newLine++;                            // context line
+    }
+    return set;
+  }
+
   function toast(msg, type = 'success') {
     document.querySelectorAll('.mdr-toast').forEach(t => t.remove());
     const t = document.createElement('div');
     t.className = `mdr-toast mdr-toast-${type}`;
-    t.innerHTML = `<span>${{success:'\u2713',error:'\u2717',info:'\u2139'}[type]||''}</span><span>${msg}</span>`;
+    const icon = document.createElement('span');
+    icon.textContent = {success:'\u2713',error:'\u2717',info:'\u2139'}[type] || '';
+    const text = document.createElement('span');
+    text.textContent = msg;
+    t.append(icon, text);
     document.body.appendChild(t);
     setTimeout(() => { t.style.animation = 'mdr-toast-out 0.2s ease-in forwards'; setTimeout(() => t.remove(), 200); }, 3500);
   }
@@ -46,7 +111,13 @@ window.MDROverlay = (() => {
     document.removeEventListener('keydown', onEsc);
   }
 
-  function onEsc(e) { if (e.key === 'Escape' && !el?.querySelector('.mdr-inline-form')) close(); }
+  function onEsc(e) {
+    if (e.key !== 'Escape') return;
+    const dialog = el?.querySelector('.mdr-submit-dialog');
+    if (dialog) { dialog.remove(); return; }
+    if (editMode) return; // exit edit mode explicitly via Cancel/Commit
+    if (!el?.querySelector('.mdr-inline-form')) close();
+  }
 
   async function getTheme() {
     return new Promise(r => chrome.storage.local.get(['mdr_theme'], d => {
@@ -72,6 +143,10 @@ window.MDROverlay = (() => {
     const next = current === 'dark' ? 'light' : 'dark';
     el.setAttribute('data-theme', next);
     chrome.storage.local.set({ mdr_theme: next });
+    renderMermaidDiagrams(); // re-render diagrams with the matching mermaid theme
+    const richUI = el.querySelector('#mdr-editor-rich .toastui-editor-defaultUI');
+    if (richUI) richUI.classList.toggle('toastui-editor-dark', next === 'dark');
+    updatePreview();
   }
 
   function shell() {
@@ -88,8 +163,9 @@ window.MDROverlay = (() => {
           <div class="mdr-mode-toggle" id="mdr-mode-toggle">
             <button class="mdr-mode-btn active" data-mode="comment">Comment</button>
             <button class="mdr-mode-btn" data-mode="review">Start Review</button>
+            <button class="mdr-mode-btn" data-mode="edit">Edit</button>
           </div>
-          <select class="mdr-file-select" id="mdr-file-select" disabled><option>Loading...</option></select>
+          <span class="mdr-topbar-file" id="mdr-current-file" title=""></span>
           <button class="mdr-download-btn" id="mdr-download" title="Download .md file"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14ZM7.25 7.689V2a.75.75 0 0 1 1.5 0v5.689l1.97-1.969a.749.749 0 1 1 1.06 1.06l-3.25 3.25a.749.749 0 0 1-1.06 0L4.22 6.78a.749.749 0 1 1 1.06-1.06l1.97 1.969Z"/></svg></button>
           <button class="mdr-theme-btn" id="mdr-theme-toggle" title="Toggle dark/light mode"><span class="mdr-theme-sun"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 1.5a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11ZM8 0a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V.75A.75.75 0 0 1 8 0Zm0 13a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 8 13ZM2.343 2.343a.75.75 0 0 1 1.061 0l1.06 1.061a.75.75 0 0 1-1.06 1.06L2.343 3.404a.75.75 0 0 1 0-1.06Zm9.193 9.193a.75.75 0 0 1 1.06 0l1.061 1.06a.75.75 0 0 1-1.06 1.061l-1.061-1.06a.75.75 0 0 1 0-1.061ZM0 8a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5H.75A.75.75 0 0 1 0 8Zm13 0a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 13 8ZM2.343 13.657a.75.75 0 0 1 0-1.06l1.06-1.061a.75.75 0 0 1 1.061 1.06l-1.06 1.061a.75.75 0 0 1-1.061 0Zm9.193-9.193a.75.75 0 0 1 0-1.06l1.061-1.061a.75.75 0 0 1 1.06 1.06l-1.06 1.061a.75.75 0 0 1-1.061 0Z"/></svg></span><span class="mdr-theme-knob"></span><span class="mdr-theme-moon"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M9.598 1.591a.749.749 0 0 1 .785-.175 7.001 7.001 0 1 1-8.967 8.967.75.75 0 0 1 .961-.96 5.5 5.5 0 0 0 7.046-7.046.75.75 0 0 1 .175-.786Zm1.616 1.945a7 7 0 0 1-7.678 7.678 5.499 5.499 0 1 0 7.678-7.678Z"/></svg></span></button>
           <button class="mdr-close-btn" id="mdr-close" title="Close (Esc)">&times;</button>
@@ -102,8 +178,31 @@ window.MDROverlay = (() => {
           <button class="mdr-rb-btn mdr-rb-submit" id="mdr-review-submit">Submit Review</button>
         </div>
       </div>
+      <div class="mdr-review-bar" id="mdr-edit-bar" hidden>
+        <span class="mdr-review-bar-text">Editing <strong id="mdr-edit-file"></strong> <span class="mdr-review-warn" id="mdr-edit-status">— no changes yet</span></span>
+        <div class="mdr-review-bar-actions">
+          <div class="mdr-mode-toggle mdr-editview-toggle">
+            <button class="mdr-mode-btn active" data-editview="raw" title="Edit raw markdown with live preview">Raw</button>
+            <button class="mdr-mode-btn" data-editview="rich" title="Edit visually (WYSIWYG)">Rich</button>
+          </div>
+          <button class="mdr-rb-btn mdr-rb-discard" id="mdr-edit-cancel">Cancel</button>
+          <button class="mdr-rb-btn mdr-rb-submit" id="mdr-edit-commit">Commit changes</button>
+        </div>
+      </div>
       <div class="mdr-statsbar" id="mdr-statsbar"><span>Loading...</span></div>
       <div class="mdr-body">
+        <div class="mdr-filetree" id="mdr-filetree">
+          <div class="mdr-filetree-header">
+            <span class="mdr-filetree-title">Files <span class="mdr-filetree-count" id="mdr-filetree-count"></span></span>
+            <button class="mdr-filetree-collapse" id="mdr-filetree-collapse" title="Hide file tree">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.749.749 0 1 1 1.06 1.06L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z"/></svg>
+            </button>
+          </div>
+          <div class="mdr-filetree-list" id="mdr-filetree-list"></div>
+        </div>
+        <button class="mdr-filetree-rail" id="mdr-filetree-rail" hidden title="Show file tree">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h5.5c.966 0 1.75.784 1.75 1.75v1h4a1.75 1.75 0 0 1 1.75 1.75v7.75A1.75 1.75 0 0 1 13 15H3a2 2 0 0 1-2-2V2.75C1 1.784 1.784 1 1.75 1ZM2.5 2.75v10.25c0 .138.112.25.25.25h.25v-8.5a1.75 1.75 0 0 1 1.75-1.75h2.75v-.25a.25.25 0 0 0-.25-.25h-5.5a.25.25 0 0 0-.25.25Z"/></svg>
+        </button>
         <div class="mdr-content" id="mdr-content">
           <div class="mdr-loading"><div class="mdr-spinner"></div><span>Loading...</span></div>
         </div>
@@ -115,15 +214,21 @@ window.MDROverlay = (() => {
   }
 
   function setupReviewMode() {
-    el.querySelectorAll('.mdr-mode-btn').forEach(btn => {
+    el.querySelectorAll('#mdr-mode-toggle .mdr-mode-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const mode = btn.getAttribute('data-mode');
-        el.querySelectorAll('.mdr-mode-btn').forEach(b => b.classList.remove('active'));
+        if (!mode) return; // edit-view (Raw/Rich) buttons share the class but not this handler
+        el.querySelectorAll('#mdr-mode-toggle .mdr-mode-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
 
         if (mode === 'review') {
+          exitEditMode();
           startReviewMode();
+        } else if (mode === 'edit') {
+          exitReviewMode();
+          startEditMode();
         } else {
+          exitEditMode();
           exitReviewMode();
         }
       });
@@ -131,13 +236,18 @@ window.MDROverlay = (() => {
 
     el.querySelector('#mdr-review-discard').addEventListener('click', discardReview);
     el.querySelector('#mdr-review-submit').addEventListener('click', showSubmitDialog);
+    el.querySelector('#mdr-edit-cancel').addEventListener('click', cancelEdit);
+    el.querySelector('#mdr-edit-commit').addEventListener('click', showCommitDialog);
+    el.querySelectorAll('[data-editview]').forEach(btn =>
+      btn.addEventListener('click', () => setEditView(btn.getAttribute('data-editview'))));
   }
 
   async function startReviewMode() {
     reviewMode = true;
-    pendingComments = [];
+    pendingComments = await loadPendingFromStorage();
     el.querySelector('#mdr-review-bar').hidden = false;
     updatePendingCount();
+    if (fileData) { renderCommentsSidebar(fileData.filePath); refreshPendingBadges(); }
     toast('Review mode — add comments, then submit all at once', 'info');
   }
 
@@ -151,7 +261,7 @@ window.MDROverlay = (() => {
     if (pendingComments.length > 0 && !confirm(`Discard ${pendingComments.length} pending comment(s)?`)) return;
     exitReviewMode();
     savePendingToStorage();
-    el.querySelectorAll('.mdr-mode-btn').forEach(b => b.classList.remove('active'));
+    el.querySelectorAll('#mdr-mode-toggle .mdr-mode-btn').forEach(b => b.classList.remove('active'));
     el.querySelector('[data-mode="comment"]').classList.add('active');
     el.querySelectorAll('.mdr-pending-badge').forEach(b => b.remove());
     if (fileData) renderCommentsSidebar(fileData.filePath);
@@ -208,8 +318,279 @@ window.MDROverlay = (() => {
   async function loadPendingFromStorage() {
     const key = getStorageKey();
     return new Promise(r => {
-      chrome.storage.local.get([key], d => r(d[key] || []));
+      chrome.storage.local.get([key], d => {
+        // Drafts saved by older versions have no id — assign one on load
+        r((d[key] || []).map(c => c.id ? c : { ...c, id: nextDraftId() }));
+      });
     });
+  }
+
+  // --- Edit mode: modify the file and commit to the PR branch ---
+
+  let editMode = false;
+  let editorDirty = false;
+  let previewGen = 0;
+  let richEditor = null;
+  let editView = 'raw';
+
+  function teardownRichEditor() {
+    if (richEditor) {
+      try { richEditor.destroy(); } catch {}
+      richEditor = null;
+    }
+  }
+
+  function syncFromRichEditor() {
+    const ta = el?.querySelector('#mdr-editor-ta');
+    if (!richEditor || !ta) return;
+    const md = richEditor.getMarkdown();
+    if (md !== ta.value) {
+      ta.value = md;
+      ta.dispatchEvent(new Event('input'));
+    }
+  }
+
+  function setEditView(view) {
+    const raw = el.querySelector('#mdr-editor-raw');
+    const rich = el.querySelector('#mdr-editor-rich');
+    const ta = el.querySelector('#mdr-editor-ta');
+    if (!raw || !rich || !ta) return;
+
+    if (view === 'rich' && !window.toastui?.Editor) {
+      toast('Rich editor failed to load — using raw view', 'error');
+      view = 'raw';
+    }
+
+    el.querySelectorAll('[data-editview]').forEach(b =>
+      b.classList.toggle('active', b.getAttribute('data-editview') === view));
+
+    if (view === 'rich') {
+      raw.hidden = true;
+      rich.hidden = false;
+      if (!richEditor) {
+        richEditor = new toastui.Editor({
+          el: rich,
+          initialEditType: 'wysiwyg',
+          hideModeSwitch: true,
+          height: '100%',
+          initialValue: ta.value,
+          usageStatistics: false,
+          autofocus: true,
+          theme: el.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'
+        });
+        let debounce;
+        richEditor.on('change', () => {
+          clearTimeout(debounce);
+          debounce = setTimeout(syncFromRichEditor, 300);
+        });
+      } else if (richEditor.getMarkdown() !== ta.value) {
+        richEditor.setMarkdown(ta.value);
+      }
+    } else {
+      if (richEditor && !rich.hidden) syncFromRichEditor();
+      rich.hidden = true;
+      raw.hidden = false;
+    }
+
+    editView = view;
+    chrome.storage.local.set({ mdr_edit_view: view });
+  }
+
+  function editStorageKey() {
+    return `mdr_edit_${pr.owner}_${pr.repo}_${pr.pullNumber}_${fileData.filePath}`;
+  }
+
+  function toBase64Utf8(str) {
+    const bytes = new TextEncoder().encode(str);
+    let bin = '';
+    for (const b of bytes) bin += String.fromCharCode(b);
+    return btoa(bin);
+  }
+
+  function updateEditStatus() {
+    const status = el.querySelector('#mdr-edit-status');
+    if (status) status.textContent = editorDirty ? '— unsaved changes (kept locally until you commit)' : '— no changes yet';
+  }
+
+  async function startEditMode() {
+    if (!fileData) { toast('File still loading', 'info'); return; }
+    editMode = true;
+    editorDirty = false;
+    el.querySelector('#mdr-edit-bar').hidden = false;
+    el.querySelector('#mdr-edit-file').textContent = fileData.filePath;
+
+    const content = el.querySelector('#mdr-content');
+    content.classList.add('mdr-content-editing');
+    content.innerHTML = `
+      <div class="mdr-editor">
+        <div class="mdr-editor-raw" id="mdr-editor-raw">
+          <textarea class="mdr-editor-textarea" id="mdr-editor-ta" spellcheck="false"></textarea>
+          <div class="mdr-editor-preview mdr-markdown" id="mdr-editor-preview"></div>
+        </div>
+        <div class="mdr-editor-rich" id="mdr-editor-rich" hidden></div>
+      </div>`;
+
+    const ta = el.querySelector('#mdr-editor-ta');
+    ta.value = fileData.raw;
+
+    // Restore unsaved edits from a previous session
+    const key = editStorageKey();
+    const saved = await new Promise(r => chrome.storage.local.get([key], d => r(d[key])));
+    if (typeof saved === 'string' && saved !== fileData.raw) {
+      ta.value = saved;
+      editorDirty = true;
+      toast('Restored unsaved edits', 'info');
+    }
+    updateEditStatus();
+    updatePreview();
+
+    let debounce;
+    ta.addEventListener('input', () => {
+      editorDirty = ta.value !== fileData.raw;
+      updateEditStatus();
+      clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        if (editorDirty) chrome.storage.local.set({ [key]: ta.value });
+        else chrome.storage.local.remove([key]);
+        updatePreview();
+      }, 300);
+    });
+
+    ta.addEventListener('keydown', e => {
+      e.stopPropagation();
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const s = ta.selectionStart, epos = ta.selectionEnd;
+        ta.setRangeText('  ', s, epos, 'end');
+        ta.dispatchEvent(new Event('input'));
+      }
+    });
+    setTimeout(() => ta.focus(), 50);
+
+    // Restore the user's preferred editor view (raw or rich)
+    editView = 'raw';
+    chrome.storage.local.get(['mdr_edit_view'], d => {
+      if (d.mdr_edit_view === 'rich' && editMode) setEditView('rich');
+    });
+  }
+
+  async function updatePreview() {
+    const ta = el?.querySelector('#mdr-editor-ta');
+    const prev = el?.querySelector('#mdr-editor-preview');
+    if (!ta || !prev) return;
+    const gen = ++previewGen;
+    prev.innerHTML = sanitizeHtml(marked.parse(ta.value, { gfm: true, breaks: false }));
+    if (!window.mermaid) return;
+    const dark = el.getAttribute('data-theme') === 'dark';
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' });
+    for (const codeEl of prev.querySelectorAll('pre > code.language-mermaid')) {
+      const id = `mdr-preview-mermaid-${++mermaidSeq}`;
+      try {
+        const { svg } = await mermaid.render(id, codeEl.textContent.replace(/\n$/, ''));
+        if (gen !== previewGen) return; // a newer preview replaced this one
+        const div = document.createElement('div');
+        div.className = 'mdr-mermaid-diagram';
+        div.innerHTML = svg;
+        codeEl.closest('pre').replaceWith(div);
+      } catch {
+        document.getElementById(`d${id}`)?.remove(); // leave the code block as-is
+      }
+    }
+  }
+
+  function exitEditMode() {
+    if (!editMode) return;
+    editMode = false;
+    editorDirty = false;
+    teardownRichEditor();
+    el.querySelector('#mdr-edit-bar').hidden = true;
+    el.querySelector('#mdr-content').classList.remove('mdr-content-editing');
+    if (fileData) loadFile(fileData.filePath);
+  }
+
+  function cancelEdit() {
+    if (editorDirty && !confirm('Discard your unsaved edits?')) return;
+    chrome.storage.local.remove([editStorageKey()]);
+    exitEditMode();
+    el.querySelectorAll('#mdr-mode-toggle .mdr-mode-btn').forEach(b => b.classList.remove('active'));
+    el.querySelector('[data-mode="comment"]').classList.add('active');
+  }
+
+  function showCommitDialog() {
+    const ta = el.querySelector('#mdr-editor-ta');
+    if (!ta) return;
+    if (editView === 'rich') syncFromRichEditor(); // pick up anything inside the debounce window
+    if (!editorDirty) { toast('No changes to commit', 'info'); return; }
+
+    el.querySelectorAll('.mdr-submit-dialog').forEach(d => d.remove());
+    const filename = fileData.filePath.split('/').pop();
+    const dialog = document.createElement('div');
+    dialog.className = 'mdr-submit-dialog';
+    dialog.innerHTML = `
+      <div class="mdr-submit-dialog-inner">
+        <div class="mdr-submit-dialog-header">Commit changes to <code></code></div>
+        <textarea class="mdr-inline-textarea" id="mdr-commit-msg" rows="2"></textarea>
+        <div class="mdr-submit-dialog-note">Commits directly to <strong id="mdr-commit-branch"></strong> — the PR updates immediately.</div>
+        <div class="mdr-submit-dialog-actions">
+          <button class="mdr-rb-btn mdr-rb-discard" id="mdr-cd-cancel">Cancel</button>
+          <button class="mdr-rb-btn mdr-rb-submit" id="mdr-cd-commit">Commit</button>
+        </div>
+      </div>`;
+    dialog.querySelector('code').textContent = fileData.filePath;
+    dialog.querySelector('#mdr-commit-msg').value = `docs: update ${filename}`;
+    dialog.querySelector('#mdr-commit-branch').textContent = `${pr.headRepo || pr.owner + '/' + pr.repo}@${pr.headRef}`;
+
+    el.appendChild(dialog);
+    dialog.querySelector('#mdr-cd-cancel').addEventListener('click', () => dialog.remove());
+    dialog.querySelector('#mdr-cd-commit').addEventListener('click', async () => {
+      const message = dialog.querySelector('#mdr-commit-msg').value.trim() || `docs: update ${filename}`;
+      const btn = dialog.querySelector('#mdr-cd-commit');
+      btn.disabled = true;
+      btn.textContent = 'Committing...';
+      try {
+        await commitEdit(message);
+        dialog.remove();
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'Commit';
+        const msg = /409|does not match/.test(err.message)
+          ? 'File changed on the branch since you loaded it — reopen the overlay and re-apply your edits'
+          : err.message;
+        toast(msg, 'error');
+      }
+    });
+  }
+
+  async function commitEdit(message) {
+    const ta = el.querySelector('#mdr-editor-ta');
+    const headFull = pr.headRepo || `${pr.owner}/${pr.repo}`;
+    const [headOwner, headRepoName] = headFull.split('/');
+
+    // Current blob sha from the head branch — required by the contents API,
+    // and its freshness is what detects mid-air collisions (409/422).
+    const meta = await GitHubAPI.getFileMeta(headOwner, headRepoName, fileData.filePath, pr.headRef);
+    const resp = await GitHubAPI.putFile(headOwner, headRepoName, fileData.filePath, {
+      message,
+      content: toBase64Utf8(ta.value),
+      sha: meta.sha,
+      branch: pr.headRef
+    });
+
+    pr.headSha = resp.commit.sha;
+    chrome.storage.local.remove([editStorageKey()]);
+    editorDirty = false;
+
+    // Diff hunks changed — refresh file list so commentable-line detection stays correct
+    try {
+      const freshFiles = await GitHubAPI.getPRFiles(pr.owner, pr.repo, pr.pullNumber);
+      files = freshFiles.filter(f => /\.(md|markdown|mdx)$/i.test(f.filename) && f.status !== 'removed');
+      renderFileTree();
+    } catch {}
+
+    exitEditMode();
+    el.querySelectorAll('#mdr-mode-toggle .mdr-mode-btn').forEach(b => b.classList.remove('active'));
+    el.querySelector('[data-mode="comment"]').classList.add('active');
+    toast(`Committed to ${pr.headRef} — PR updated`);
   }
 
   function showSubmitDialog() {
@@ -235,7 +616,7 @@ window.MDROverlay = (() => {
         </div>
       </div>`;
 
-    el.querySelector('.mdr-body').appendChild(dialog);
+    el.appendChild(dialog);
 
     dialog.querySelector('#mdr-sd-cancel').addEventListener('click', () => dialog.remove());
 
@@ -267,7 +648,7 @@ window.MDROverlay = (() => {
         commit_id: pr.headSha,
         event,
         body: body || '',
-        comments: pendingComments.map(c => ({ path: c.path, position: c.position, body: c.body }))
+        comments: pendingComments.map(c => ({ path: c.path, line: c.line, side: 'RIGHT', body: c.body }))
       })
     });
 
@@ -276,7 +657,7 @@ window.MDROverlay = (() => {
 
     exitReviewMode();
     savePendingToStorage();
-    el.querySelectorAll('.mdr-mode-btn').forEach(b => b.classList.remove('active'));
+    el.querySelectorAll('#mdr-mode-toggle .mdr-mode-btn').forEach(b => b.classList.remove('active'));
     el.querySelector('[data-mode="comment"]').classList.add('active');
     el.querySelectorAll('.mdr-pending-badge').forEach(b => b.remove());
 
@@ -294,6 +675,7 @@ window.MDROverlay = (() => {
       if (comments.length >= expectedCount) break;
       if (list) list.querySelector('span').textContent = `Syncing comments from GitHub... (attempt ${attempt + 2})`;
     }
+    await loadThreadMap();
 
     if (fileData) await loadFile(fileData.filePath);
 
@@ -303,12 +685,22 @@ window.MDROverlay = (() => {
   async function loadPR() {
     try {
       el.querySelector('#mdr-pr-info').textContent = `PR #${pr.pullNumber} · ${pr.owner}/${pr.repo}`;
-      const select = el.querySelector('#mdr-file-select');
-      select.innerHTML = files.map(f => `<option value="${f.filename}">${f.filename.split('/').pop()} (+${f.additions})</option>`).join('');
-      select.disabled = false;
-      select.addEventListener('change', () => loadFile(select.value));
+
+      // Refresh head info at overlay-open time — the page may have been loaded
+      // long ago and new commits pushed since (stale sha breaks comment anchoring).
+      try {
+        const fresh = await GitHubAPI.getPR(pr.owner, pr.repo, pr.pullNumber);
+        pr.headSha = fresh.head.sha;
+        pr.headRef = fresh.head.ref;
+        pr.headRepo = fresh.head.repo ? fresh.head.repo.full_name : `${pr.owner}/${pr.repo}`;
+        pr.prUser = fresh.user;
+        pr.requestedReviewers = fresh.requested_reviewers || [];
+      } catch {}
+      renderFileTree();
+      setupFileTreeCollapse();
 
       comments = await GitHubAPI.getComments(pr.owner, pr.repo, pr.pullNumber);
+      await loadThreadMap();
 
       // Build mention users list from collaborators + commenters
       buildMentionUsers();
@@ -319,7 +711,7 @@ window.MDROverlay = (() => {
         pendingComments = saved;
         reviewMode = true;
         el.querySelector('#mdr-review-bar').hidden = false;
-        el.querySelectorAll('.mdr-mode-btn').forEach(b => b.classList.remove('active'));
+        el.querySelectorAll('#mdr-mode-toggle .mdr-mode-btn').forEach(b => b.classList.remove('active'));
         el.querySelector('[data-mode="review"]').classList.add('active');
         updatePendingCount();
         toast(`Restored ${saved.length} pending review comments`, 'info');
@@ -331,59 +723,212 @@ window.MDROverlay = (() => {
     }
   }
 
+  // --- File tree pane ---
+
+  function selectFile(path) {
+    if (path === fileData?.filePath) return;
+    if (editMode) {
+      // Unsaved edits are already persisted per-file; restore offered on return
+      editMode = false;
+      editorDirty = false;
+      teardownRichEditor();
+      el.querySelector('#mdr-edit-bar').hidden = true;
+      el.querySelector('#mdr-content').classList.remove('mdr-content-editing');
+      el.querySelectorAll('#mdr-mode-toggle .mdr-mode-btn').forEach(b => b.classList.remove('active'));
+      el.querySelector('[data-mode="comment"]').classList.add('active');
+    }
+    loadFile(path);
+  }
+
+  function renderFileTree() {
+    const list = el.querySelector('#mdr-filetree-list');
+    if (!list) return;
+    el.querySelector('#mdr-filetree-count').textContent = `(${files.length})`;
+
+    // Build nested structure from file paths
+    const root = { dirs: new Map(), files: [] };
+    for (const f of files) {
+      const parts = f.filename.split('/');
+      let node = root;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (!node.dirs.has(parts[i])) node.dirs.set(parts[i], { dirs: new Map(), files: [] });
+        node = node.dirs.get(parts[i]);
+      }
+      node.files.push(f);
+    }
+
+    list.innerHTML = '';
+    list.appendChild(renderTreeLevel(root, 0));
+    updateFileTreeActive();
+  }
+
+  function renderTreeLevel(node, depth) {
+    const ul = document.createElement('ul');
+    ul.className = 'mdr-tree-ul';
+
+    for (const [name, child] of [...node.dirs.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const li = document.createElement('li');
+      const row = document.createElement('button');
+      row.className = 'mdr-tree-row mdr-tree-dir';
+      row.style.paddingLeft = `${10 + depth * 14}px`;
+      row.innerHTML = `
+        <span class="mdr-tree-arrow">&#9660;</span>
+        <svg class="mdr-tree-ico" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h5.5c.55 0 1.07.26 1.4.7l.9 1.2c.05.06.12.1.2.1h4.5c.97 0 1.75.78 1.75 1.75v8.5A1.75 1.75 0 0 1 14.25 15H1.75A1.75 1.75 0 0 1 0 13.25V2.75C0 1.78.78 1 1.75 1Z"/></svg>
+        <span class="mdr-tree-name"></span>`;
+      row.querySelector('.mdr-tree-name').textContent = name;
+      const sub = renderTreeLevel(child, depth + 1);
+      row.addEventListener('click', () => {
+        sub.hidden = !sub.hidden;
+        row.querySelector('.mdr-tree-arrow').innerHTML = sub.hidden ? '&#9654;' : '&#9660;';
+      });
+      li.append(row, sub);
+      ul.appendChild(li);
+    }
+
+    for (const f of [...node.files].sort((a, b) => a.filename.localeCompare(b.filename))) {
+      const li = document.createElement('li');
+      const row = document.createElement('button');
+      row.className = 'mdr-tree-row mdr-tree-file';
+      row.setAttribute('data-path', f.filename);
+      row.title = f.filename;
+      row.style.paddingLeft = `${10 + depth * 14 + 16}px`;
+      row.innerHTML = `
+        <svg class="mdr-tree-ico" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Z"/></svg>
+        <span class="mdr-tree-name"></span>
+        <span class="mdr-tree-adds"></span>`;
+      row.querySelector('.mdr-tree-name').textContent = f.filename.split('/').pop();
+      row.querySelector('.mdr-tree-adds').textContent = `+${f.additions}`;
+      row.addEventListener('click', () => selectFile(f.filename));
+      li.appendChild(row);
+      ul.appendChild(li);
+    }
+
+    return ul;
+  }
+
+  function updateFileTreeActive() {
+    el.querySelectorAll('.mdr-tree-file').forEach(n =>
+      n.classList.toggle('active', n.getAttribute('data-path') === fileData?.filePath));
+    const label = el.querySelector('#mdr-current-file');
+    if (label && fileData) {
+      label.textContent = fileData.filePath.split('/').pop();
+      label.title = fileData.filePath;
+    }
+  }
+
+  function setupFileTreeCollapse() {
+    const pane = el.querySelector('#mdr-filetree');
+    const rail = el.querySelector('#mdr-filetree-rail');
+    const setCollapsed = (collapsed) => {
+      pane.hidden = collapsed;
+      rail.hidden = !collapsed;
+      chrome.storage.local.set({ mdr_tree_collapsed: collapsed });
+    };
+    el.querySelector('#mdr-filetree-collapse').addEventListener('click', () => setCollapsed(true));
+    rail.addEventListener('click', () => setCollapsed(false));
+    chrome.storage.local.get(['mdr_tree_collapsed'], d => { if (d.mdr_tree_collapsed) setCollapsed(true); });
+  }
+
   async function loadFile(filePath) {
     setContent('<div class="mdr-loading"><div class="mdr-spinner"></div><span>Rendering...</span></div>');
     try {
-      const raw = await GitHubAPI.getRawFile(pr.owner, pr.repo, filePath, pr.headRef);
-      const lineMap = buildLineMap(raw);
-      const html = renderWithLines(raw, lineMap);
-
-      fileData = { filePath, raw, lineMap };
-      setContent(`<div class="mdr-markdown">${html}</div>`);
+      // Fetch by head sha, not branch name — a fork PR's branch doesn't exist
+      // in the base repo, but its head commits are reachable there by sha.
+      const raw = await GitHubAPI.getRawFile(pr.owner, pr.repo, filePath, pr.headSha);
+      const html = renderWithLines(raw);
 
       const file = files.find(f => f.filename === filePath);
-      const blockCount = el.querySelectorAll('[data-line]').length;
+      const isModified = file && file.status !== 'added';
+      fileData = {
+        filePath, raw,
+        commentable: parseCommentableLines(file?.patch),
+        added: parseAddedLines(file?.patch),
+        isModified
+      };
+      setContent(`<div class="mdr-markdown">${html}</div>`);
+
+      const blocks = [...el.querySelectorAll('[data-line]')];
+      const blockCount = blocks.length;
+      const commentableCount = blocks.filter(b => isLineCommentable(parseInt(b.getAttribute('data-line')))).length;
+
+      markChangedBlocks();
+      // Default to diff-aware view on modified files (where there's unchanged
+      // content to hide); pure-new files show in full.
+      diffView = !!(isModified && fileData.added && fileData.added.size);
+
+      const commentableNote = commentableCount === blockCount
+        ? `<span>All commentable</span>`
+        : `<span>${commentableCount}/${blockCount} commentable — GitHub only allows comments on lines in the diff</span>`;
+      const diffToggle = isModified
+        ? `<button class="mdr-diff-toggle" id="mdr-diff-toggle"></button>`
+        : '';
       el.querySelector('#mdr-statsbar').innerHTML =
-        `<span>${blockCount} blocks</span><span>+${file.additions} lines</span><span>All commentable</span>`;
+        `<span>${blockCount} blocks</span><span>+${file.additions} lines</span>${commentableNote}${diffToggle}`;
+
+      if (isModified) {
+        const btn = el.querySelector('#mdr-diff-toggle');
+        btn.addEventListener('click', () => { diffView = !diffView; applyDiffView(); });
+      }
+      applyDiffView();
 
       renderCommentsSidebar(filePath);
       attachCommentButtons();
       refreshPendingBadges();
+      renderMermaidDiagrams();
+      updateFileTreeActive();
     } catch (err) {
       setContent(`<div class="mdr-loading"><span class="mdr-error">${err.message}</span></div>`);
     }
   }
 
-  // --- Line mapping via marked tokenizer ---
+  // --- Diff-aware view ---
 
-  function buildLineMap(raw) {
-    const tokens = marked.lexer(raw);
-    const map = []; // array of { tokenIndex, startLine, raw }
-    let offset = 0;
+  // Block units the diff view reasons about. Operating at unit granularity (not
+  // per line) means a code block's <pre> shell is shown/hidden as a whole rather
+  // than left as an empty box when its individual lines are hidden.
+  const DIFF_UNIT_SEL = 'h1,h2,h3,h4,h5,h6,p,blockquote,pre,tr,li,.mdr-mermaid-block';
 
-    function getLineAt(charOffset) {
-      let line = 1;
-      for (let i = 0; i < charOffset && i < raw.length; i++) {
-        if (raw[i] === '\n') line++;
+  // Tag each block unit as changed (contains an added line) and/or context
+  // (headings + table header rows, always shown to keep structure readable).
+  function markChangedBlocks() {
+    const added = fileData?.added;
+    el.querySelectorAll(`.mdr-markdown :is(${DIFF_UNIT_SEL})`).forEach(b => {
+      const own = parseInt(b.getAttribute('data-line'));
+      const isContext = /^H[1-6]$/.test(b.tagName) || (b.tagName === 'TR' && !!b.querySelector('th'));
+      let changed;
+      if (!added) {
+        changed = true;
+      } else {
+        // Changed if this unit's own line, or any descendant line, was added.
+        const lines = [];
+        if (!isNaN(own)) lines.push(own);
+        b.querySelectorAll('[data-line]').forEach(n => lines.push(parseInt(n.getAttribute('data-line'))));
+        changed = lines.some(l => added.has(l));
       }
-      return line;
-    }
-
-    for (let i = 0; i < tokens.length; i++) {
-      const tok = tokens[i];
-      if (!tok.raw) continue;
-      const idx = raw.indexOf(tok.raw, offset);
-      if (idx === -1) continue;
-      const line = getLineAt(idx);
-      map.push({ index: i, type: tok.type, startLine: line, text: tok.raw.substring(0, 80) });
-      offset = idx + tok.raw.length;
-    }
-
-    return map;
+      b.toggleAttribute('data-changed', changed);
+      b.toggleAttribute('data-context', isContext);
+    });
   }
 
-  function renderWithLines(raw, lineMap) {
-    const html = marked.parse(raw, { gfm: true, breaks: false });
+  function applyDiffView() {
+    const md = el.querySelector('.mdr-markdown');
+    if (!md) return;
+    md.querySelectorAll(`:is(${DIFF_UNIT_SEL})`).forEach(b => {
+      const hide = diffView && !b.hasAttribute('data-changed') && !b.hasAttribute('data-context');
+      b.classList.toggle('mdr-diff-hide', hide);
+    });
+    md.classList.toggle('mdr-diff-only', diffView);
+    const btn = el.querySelector('#mdr-diff-toggle');
+    if (btn) {
+      btn.textContent = diffView ? 'Showing changes · Show full document' : 'Show changed only';
+      btn.classList.toggle('mdr-diff-toggle-active', diffView);
+    }
+  }
+
+  // --- Line mapping ---
+
+  function renderWithLines(raw) {
+    const html = sanitizeHtml(marked.parse(raw, { gfm: true, breaks: false }));
     const container = document.createElement('div');
     container.innerHTML = html;
 
@@ -398,7 +943,8 @@ window.MDROverlay = (() => {
       const fenceLine = parseInt(pre.getAttribute('data-line'));
       const codeEl = pre.querySelector('code');
       const text = codeEl ? codeEl.textContent : pre.textContent;
-      const codeLines = text.replace(/\n$/, '').split('\n');
+      const src = text.replace(/\n$/, '');
+      const codeLines = src.split('\n');
 
       // Build line-by-line HTML inside the pre
       // Each line is a div with its own data-line (fence line + 1 + index)
@@ -408,6 +954,22 @@ window.MDROverlay = (() => {
         return `<div class="mdr-code-line" data-line="${lineNum}" style="position:relative"><span class="mdr-code-linenum">${lineNum}</span><span class="mdr-code-text">${escaped || ' '}</span></div>`;
       }).join('');
 
+      // Mermaid blocks render as a diagram with a source toggle. The wrapper
+      // carries the fence's data-line so the diagram is commentable as a block;
+      // the source view keeps per-line commenting.
+      if (codeEl && /\blanguage-mermaid\b/.test(codeEl.className) && window.mermaid) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'mdr-mermaid-block';
+        wrapper.setAttribute('data-line', fenceLine);
+        wrapper.setAttribute('style', 'position:relative');
+        wrapper.innerHTML = `
+          <div class="mdr-mermaid-toolbar"><span>mermaid</span><button class="mdr-mermaid-toggle" type="button">View source</button></div>
+          <div class="mdr-mermaid-diagram" data-mermaid-src="${encodeURIComponent(src)}"><div class="mdr-loading"><div class="mdr-spinner"></div></div></div>
+          <pre class="mdr-mermaid-source" style="padding:0;margin:0" hidden>${linesHtml}</pre>`;
+        pre.replaceWith(wrapper);
+        return;
+      }
+
       pre.innerHTML = linesHtml;
       pre.removeAttribute('data-line'); // remove block-level data-line; individual lines have it
       pre.style.position = '';
@@ -415,17 +977,63 @@ window.MDROverlay = (() => {
     });
   }
 
+  // --- Mermaid rendering ---
+
+  let mermaidSeq = 0;
+
+  async function renderMermaidDiagrams() {
+    if (!window.mermaid || !el) return;
+    const dark = el.getAttribute('data-theme') === 'dark';
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' });
+
+    for (const target of el.querySelectorAll('.mdr-mermaid-diagram')) {
+      const src = decodeURIComponent(target.getAttribute('data-mermaid-src') || '');
+      if (!src) continue;
+      const id = `mdr-mermaid-${++mermaidSeq}`;
+      try {
+        const { svg } = await mermaid.render(id, src);
+        target.innerHTML = svg;
+      } catch (err) {
+        // Mermaid leaves a temp error element in the body on failure
+        document.getElementById(`d${id}`)?.remove();
+        target.innerHTML = '';
+        const errEl = document.createElement('div');
+        errEl.className = 'mdr-mermaid-error';
+        errEl.textContent = `Mermaid render failed: ${err?.message || err}`;
+        target.appendChild(errEl);
+        const srcEl = target.closest('.mdr-mermaid-block')?.querySelector('.mdr-mermaid-source');
+        if (srcEl) srcEl.hidden = false;
+      }
+    }
+
+    el.querySelectorAll('.mdr-mermaid-toggle').forEach(btn => {
+      if (btn.__mdrBound) return;
+      btn.__mdrBound = true;
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const block = btn.closest('.mdr-mermaid-block');
+        const dia = block.querySelector('.mdr-mermaid-diagram');
+        const srcEl = block.querySelector('.mdr-mermaid-source');
+        const showSrc = srcEl.hidden;
+        srcEl.hidden = !showSrc;
+        dia.hidden = showSrc;
+        btn.textContent = showSrc ? 'View diagram' : 'View source';
+      });
+    });
+  }
+
   function stripMarkdown(text) {
     return text
       .replace(/^#{1,6}\s+/, '')       // heading prefix
-      .replace(/^[\s>*+\-\d.]+/, '')   // list/blockquote prefix (leading only)
+      .replace(/^\s*>+\s*/, '')        // blockquote marker(s) (before emphasis, so **bold** at start survives)
+      .replace(/^[\s*+\-\d.]+/, '')    // list marker prefix (leading only)
       .replace(/\*\*(.+?)\*\*/g, '$1') // bold
       .replace(/\*(.+?)\*/g, '$1')     // italic
       .replace(/__(.+?)__/g, '$1')     // bold
       .replace(/_(.+?)_/g, '$1')       // italic
       .replace(/`([^`]+)`/g, '$1')     // inline code
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
-      .replace(/[()]/g, '')            // parens
+      .replace(/[*()]/g, '')           // stray emphasis/parens left over
       .replace(/\s+/g, ' ')
       .trim()
       .toLowerCase();
@@ -567,6 +1175,32 @@ window.MDROverlay = (() => {
     return c.line || c.original_line || c.position || 0;
   }
 
+  async function loadThreadMap() {
+    try {
+      threadMap = await GitHubAPI.getReviewThreads(pr.owner, pr.repo, pr.pullNumber);
+    } catch (err) {
+      threadMap = {}; // GraphQL may be unavailable (e.g. token without scope) — degrade gracefully
+    }
+  }
+
+  function threadFor(rootId) {
+    return threadMap[rootId] || null;
+  }
+
+  async function toggleResolve(rootId, resolve) {
+    const t = threadFor(rootId);
+    if (!t) { toast('No thread found for this comment', 'error'); return; }
+    try {
+      if (resolve) await GitHubAPI.resolveThread(t.threadId);
+      else await GitHubAPI.unresolveThread(t.threadId);
+      t.isResolved = resolve;
+      renderCommentsSidebar(fileData.filePath);
+      toast(resolve ? 'Thread resolved' : 'Thread reopened');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  }
+
   async function renderCommentsSidebar(filePath) {
     const fileComments = comments.filter(c => c.path === filePath);
     const filePending = pendingComments.filter(c => c.path === filePath);
@@ -608,9 +1242,9 @@ window.MDROverlay = (() => {
     // Render pending (draft) comments first
     if (filePending.length > 0) {
       const pendingByLine = new Map();
-      filePending.forEach((c, idx) => {
+      filePending.forEach(c => {
         const arr = pendingByLine.get(c.line) || [];
-        arr.push({ ...c, _idx: idx });
+        arr.push(c);
         pendingByLine.set(c.line, arr);
       });
       const pendingLines = [...pendingByLine.keys()].sort((a, b) => a - b);
@@ -622,14 +1256,14 @@ window.MDROverlay = (() => {
         html += `<div class="mdr-line-group-header" data-line="${line}">Line ${line}</div>`;
         for (const c of pendingByLine.get(line)) {
           html += `
-            <div class="mdr-comment-card mdr-pending-card" data-pending-idx="${c._idx}" data-line="${c.line}">
+            <div class="mdr-comment-card mdr-pending-card" data-pending-id="${c.id}" data-line="${c.line}">
               <div class="mdr-comment-meta">
                 <span class="mdr-pending-badge">Draft</span>
                 <span class="mdr-comment-line">L${c.line}</span>
               </div>
-              <div class="mdr-comment-body mdr-comment-md">${marked.parse(c.body || '', { gfm: true, breaks: true })}</div>
+              <div class="mdr-comment-body mdr-comment-md">${renderMdBody(c.body)}</div>
               <div class="mdr-comment-actions">
-                <button class="mdr-ca-btn mdr-ca-delete mdr-pending-remove" data-pending-idx="${c._idx}">Remove</button>
+                <button class="mdr-ca-btn mdr-ca-delete mdr-pending-remove" data-pending-id="${c.id}">Remove</button>
               </div>
             </div>`;
         }
@@ -648,7 +1282,19 @@ window.MDROverlay = (() => {
       for (const root of group) {
         const replies = (replyMap.get(root.id) || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
         const hasReplies = replies.length > 0;
+        const thread = threadFor(root.id);
+        const resolved = thread?.isResolved;
 
+        html += `<div class="mdr-thread ${resolved ? 'mdr-thread-resolved' : ''}" data-root="${root.id}">`;
+
+        if (resolved) {
+          html += `<div class="mdr-thread-resolved-bar" data-expand="${root.id}">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L1.72 8.78a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>
+            Resolved · ${root.user.login} <span class="mdr-thread-show">Show</span>
+          </div>`;
+        }
+
+        html += `<div class="mdr-thread-inner" ${resolved ? 'hidden' : ''}>`;
         html += renderCommentCard(root, currentUser, false);
 
         if (hasReplies) {
@@ -662,10 +1308,19 @@ window.MDROverlay = (() => {
           html += `</div>`;
         }
 
-        html += `<button class="mdr-ca-btn mdr-ca-reply" data-reply-to="${root.id}" data-line="${getCommentLine(root)}">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M6.78 1.97a.75.75 0 0 1 0 1.06L3.81 6h6.44A4.75 4.75 0 0 1 15 10.75v2.5a.75.75 0 0 1-1.5 0v-2.5a3.25 3.25 0 0 0-3.25-3.25H3.81l2.97 2.97a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L1.47 7.28a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 0Z"/></svg>
-          Reply
-        </button>`;
+        html += `<div class="mdr-thread-actions">
+          <button class="mdr-ca-btn mdr-ca-reply" data-reply-to="${root.id}" data-line="${getCommentLine(root)}">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M6.78 1.97a.75.75 0 0 1 0 1.06L3.81 6h6.44A4.75 4.75 0 0 1 15 10.75v2.5a.75.75 0 0 1-1.5 0v-2.5a3.25 3.25 0 0 0-3.25-3.25H3.81l2.97 2.97a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L1.47 7.28a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 0Z"/></svg>
+            Reply
+          </button>`;
+        if (thread) {
+          html += `<button class="mdr-ca-btn mdr-ca-resolve" data-root="${root.id}" data-resolve="${resolved ? 'false' : 'true'}">
+            ${resolved ? 'Reopen' : 'Resolve'}
+          </button>`;
+        }
+        html += `</div>`;
+        html += `</div>`; // .mdr-thread-inner
+        html += `</div>`; // .mdr-thread
       }
       html += `</div>`;
     }
@@ -688,6 +1343,25 @@ window.MDROverlay = (() => {
           replies.hidden = true;
           arrow.innerHTML = '&#9654;';
         }
+      });
+    });
+
+    // Resolve / reopen thread
+    list.querySelectorAll('.mdr-ca-resolve').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleResolve(parseInt(btn.getAttribute('data-root')), btn.getAttribute('data-resolve') === 'true');
+      });
+    });
+
+    // Expand a collapsed resolved thread in place
+    list.querySelectorAll('.mdr-thread-resolved-bar').forEach(bar => {
+      bar.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const inner = bar.nextElementSibling;
+        const show = inner.hidden;
+        inner.hidden = !show;
+        bar.querySelector('.mdr-thread-show').textContent = show ? 'Hide' : 'Show';
       });
     });
 
@@ -734,21 +1408,13 @@ window.MDROverlay = (() => {
     list.querySelectorAll('.mdr-pending-remove').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const idx = parseInt(btn.getAttribute('data-pending-idx'));
+        const id = btn.getAttribute('data-pending-id');
+        const idx = pendingComments.findIndex(c => c.id === id);
+        if (idx === -1) return;
         pendingComments.splice(idx, 1);
         updatePendingCount();
         savePendingToStorage();
-        // Refresh pending badges
-        el.querySelectorAll('.mdr-markdown .mdr-pending-badge').forEach(b => b.remove());
-        pendingComments.filter(c => c.path === filePath).forEach(c => {
-          const target = el.querySelector(`.mdr-markdown [data-line="${c.line}"]`);
-          if (target && !target.querySelector('.mdr-pending-badge')) {
-            const badge = document.createElement('span');
-            badge.className = 'mdr-pending-badge';
-            badge.textContent = 'Pending';
-            target.appendChild(badge);
-          }
-        });
+        refreshPendingBadges();
         renderCommentsSidebar(filePath);
         toast('Draft comment removed');
       });
@@ -775,7 +1441,7 @@ window.MDROverlay = (() => {
           ${!isReply ? `<span class="mdr-comment-line">L${line}</span>` : ''}
           <span class="mdr-comment-time">${timeAgo(c.created_at)}</span>
         </div>
-        <div class="mdr-comment-body mdr-comment-md" id="mdr-cbody-${c.id}">${marked.parse(c.body || '', { gfm: true, breaks: true })}</div>
+        <div class="mdr-comment-body mdr-comment-md" id="mdr-cbody-${c.id}">${renderMdBody(c.body)}</div>
         ${isOwner ? `<div class="mdr-comment-actions">
           <button class="mdr-ca-btn mdr-ca-edit" data-id="${c.id}">Edit</button>
           <button class="mdr-ca-btn mdr-ca-delete" data-id="${c.id}">Delete</button>
@@ -993,11 +1659,22 @@ window.MDROverlay = (() => {
   function attachCommentButtons() {
     el.querySelectorAll('[data-line]').forEach(block => {
       if (block.querySelector('.mdr-comment-btn')) return;
+      const line = parseInt(block.getAttribute('data-line'));
+      const commentable = isLineCommentable(line);
       const btn = document.createElement('button');
-      btn.className = 'mdr-comment-btn';
+      btn.className = 'mdr-comment-btn' + (commentable ? '' : ' mdr-comment-btn-disabled');
       btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h2v2.19l2.72-2.72.53-.22h4.25a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25H2.75z"/></svg>`;
-      btn.title = `Comment on line ${block.getAttribute('data-line')}`;
-      btn.addEventListener('click', e => { e.stopPropagation(); openForm(block); });
+      btn.title = commentable
+        ? `Comment on line ${line}`
+        : `Line ${line} is not part of the PR diff — GitHub only allows review comments on changed or nearby lines`;
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        if (!commentable) {
+          toast('This line is not in the PR diff — GitHub only allows comments on changed lines', 'info');
+          return;
+        }
+        openForm(block);
+      });
       block.appendChild(btn);
     });
   }
@@ -1031,6 +1708,7 @@ window.MDROverlay = (() => {
 
     form.querySelector('.mdr-btn-cancel').addEventListener('click', () => form.remove());
     ta.addEventListener('keydown', e => {
+      e.stopPropagation();
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') sub.click();
       if (e.key === 'Escape') form.remove();
     });
@@ -1041,7 +1719,7 @@ window.MDROverlay = (() => {
 
       if (isReview) {
         // Batch mode: collect locally, submit all at once later
-        pendingComments.push({ path: fileData.filePath, position: line, line, body: text });
+        pendingComments.push({ id: nextDraftId(), path: fileData.filePath, line, body: text });
         updatePendingCount();
         form.remove();
 
@@ -1057,7 +1735,7 @@ window.MDROverlay = (() => {
       sub.disabled = true; sub.textContent = 'Posting...';
       try {
         const newComment = await GitHubAPI.postComment(pr.owner, pr.repo, pr.pullNumber, {
-          body: text, commitId: pr.headSha, path: fileData.filePath, position: line
+          body: text, commitId: pr.headSha, path: fileData.filePath, line
         });
         comments.push(newComment);
         form.remove();
@@ -1088,13 +1766,9 @@ window.MDROverlay = (() => {
       mentionUsers.push({ login: u.login, avatar_url: u.avatar_url || '' });
     }
 
-    // Add PR author
-    try {
-      const prData = await GitHubAPI.getPR(pr.owner, pr.repo, pr.pullNumber);
-      addUser(prData.user);
-      // Add requested reviewers
-      (prData.requested_reviewers || []).forEach(addUser);
-    } catch {}
+    // Add PR author + requested reviewers (fetched during loadPR refresh)
+    if (pr.prUser) addUser(pr.prUser);
+    (pr.requestedReviewers || []).forEach(addUser);
 
     // Add commenters
     comments.forEach(c => addUser(c.user));
